@@ -275,7 +275,7 @@ RFP 분석 결과 · 요구사항 N개 추출
 
 | 우선순위 | 항목 | 이유 |
 |---------|------|------|
-| 🟡 1 | **PDF 파서 교체** | pdf-parse(pdf.js)는 표/레이아웃 정보 손실. PyMuPDF 또는 Azure Document Intelligence 고려 |
+| 🟡 1 | **PDF 파서 교체** | pdf-parse(pdf.js)는 표/레이아웃 정보 손실. PyMuPDF 또는 Azure Document Intelligence 고려. *※ deepseek-v4-flash의 의견 — minimax-m2.7 테스트 결과 pdf-parse로도 충분하여 보류* |
 | 🟢 2 | **벡터 임베딩 재활성화** | 1536차원 embedding 컬럼은 있으나 API 404로 미사용 중. 임베딩 API 확보 시 의미 검색 가능 |
 | 🟢 3 | **Worker 동시성** | 현재는 단일 Worker가 순차 처리. job이 많아지면 Worker pool 필요 |
 | 🟢 4 | **청크 최적화** | 현재 3500자 고정 분할. 요구사항 경계를 인식하여 분할하면 품질 향상 |
