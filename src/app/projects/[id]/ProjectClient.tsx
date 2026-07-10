@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useRef, useCallback } from "react";
+import { useState, useEffect, useRef } from "react";
 import { useRouter } from "next/navigation";
 
 type Requirement = {
@@ -62,11 +62,15 @@ export default function ProjectClient({ data, autoAnalyze }: Props) {
   );
 
   // Analysis progress state
-  const [analyzing, setAnalyzing] = useState(autoAnalyze && project.status === "analyzing");
+  // autoAnalyze: 업로드 직후 진입 시 true (폴링 즉시 시작)
+  // project.status === 'analyzing': 대시보드에서 다시 돌아와도 진행바 표시
+  const [analyzing, setAnalyzing] = useState(
+    autoAnalyze || project.status === "analyzing"
+  );
   const [progress, setProgress] = useState(0);
   const [progressMessage, setProgressMessage] = useState("");
   const [analyzeError, setAnalyzeError] = useState("");
-  const eventSourceRef = useRef<EventSource | null>(null);
+  const pollingRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   // Similar RFP state
   const [similarDocs, setSimilarDocs] = useState<SimilarDoc[]>([]);
@@ -76,45 +80,45 @@ export default function ProjectClient({ data, autoAnalyze }: Props) {
 
   const selected = requirements.find((r) => r.id === selectedReq);
 
-  // ── SSE 분석 스트리밍 ─────────────────────────────────
+  // ── Polling: Worker 진행상황 조회 ────────────────────
   useEffect(() => {
     if (!analyzing) return;
 
-    const es = new EventSource(`/api/projects/${project.id}/analyze`);
-    eventSourceRef.current = es;
-
-    es.onmessage = (event) => {
+    const poll = async () => {
       try {
-        const data = JSON.parse(event.data);
+        const res = await fetch(`/api/projects/${project.id}/analyze-status`);
+        if (!res.ok) return;
+        const data = await res.json();
 
         if (data.progress != null) setProgress(data.progress);
         if (data.message) setProgressMessage(data.message);
 
-        if (data.step === "done") {
+        if (data.status === "completed") {
           setProgressMessage(data.message || "✅ 분석 완료!");
           setAnalyzing(false);
-          es.close();
-          // 잠시 후 페이지 새로고침하여 결과 표시
+          clearInterval(pollingRef.current!);
+          pollingRef.current = null;
           setTimeout(() => router.refresh(), 1500);
         }
 
-        if (data.step === "error") {
-          setAnalyzeError(data.message);
+        if (data.status === "failed") {
+          setAnalyzeError(data.error || "분석에 실패했습니다.");
           setAnalyzing(false);
-          es.close();
+          clearInterval(pollingRef.current!);
+          pollingRef.current = null;
         }
       } catch {}
     };
 
-    es.onerror = () => {
-      setAnalyzeError("분석 연결이 끊어졌습니다. 페이지를 새로고침 해보세요.");
-      setAnalyzing(false);
-      es.close();
-    };
+    // 즉시 한 번 실행 후 2초 간격 polling
+    poll();
+    pollingRef.current = setInterval(poll, 2000);
 
     return () => {
-      es.close();
-      eventSourceRef.current = null;
+      if (pollingRef.current) {
+        clearInterval(pollingRef.current);
+        pollingRef.current = null;
+      }
     };
   }, [analyzing, project.id, router]);
 
@@ -154,12 +158,11 @@ export default function ProjectClient({ data, autoAnalyze }: Props) {
   };
 
   const handleCancelAnalysis = () => {
-    if (eventSourceRef.current) {
-      eventSourceRef.current.close();
-      eventSourceRef.current = null;
+    if (pollingRef.current) {
+      clearInterval(pollingRef.current);
+      pollingRef.current = null;
     }
     setAnalyzing(false);
-    // 대시보드로 이동
     router.push("/dashboard");
   };
 

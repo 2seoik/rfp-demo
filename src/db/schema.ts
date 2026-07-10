@@ -134,6 +134,22 @@ export const auditLogs = pgTable("audit_logs", {
   createdAt: timestamp("created_at").defaultNow().notNull(),
 });
 
+// ─── Job Queue (Worker Pattern) ────────────────────────────
+export const jobs = pgTable("jobs", {
+  id: uuid("id").defaultRandom().primaryKey(),
+  type: text("type").notNull(), // 'rfp_analyze' | 'embedding' | ...
+  status: text("status").notNull().default("pending"), // pending | processing | completed | failed
+  projectId: uuid("project_id").references(() => projects.id),
+  documentId: uuid("document_id").references(() => documents.id),
+  progress: integer("progress").default(0),
+  message: text("message"),
+  error: text("error"),
+  result: text("result"), // JSON string
+  retryCount: integer("retry_count").default(0),
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+  updatedAt: timestamp("updated_at").defaultNow().notNull(),
+});
+
 // ─── Relations ──────────────────────────────────────────────
 export const organizationRelations = relations(organizations, ({ many }) => ({
   users: many(users),

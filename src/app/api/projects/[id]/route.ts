@@ -94,6 +94,7 @@ export async function DELETE(
         SELECT id FROM documents WHERE project_id = ${id}::uuid
       )
     `);
+    await db.execute(sql`DELETE FROM jobs WHERE project_id = ${id}::uuid`);
     await db.execute(sql`DELETE FROM documents WHERE project_id = ${id}::uuid`);
     await db.execute(sql`DELETE FROM projects WHERE id = ${id}::uuid`);
 
