@@ -11,24 +11,20 @@ export type ParsedDocument = {
  * Parse a PDF file and extract text content.
  */
 async function parsePDF(filePath: string): Promise<ParsedDocument> {
-  const pdfParse = (await import("pdf-parse")).default;
+  const { PDFParse } = await import("pdf-parse");
   const dataBuffer = fs.readFileSync(filePath);
-  const data = await pdfParse(dataBuffer);
-
-  // Split by page (pdf-parse returns pages joined by form feed chars)
-  const pageTexts = data.text.split("\f").filter(Boolean);
+  const parser = new PDFParse({ data: dataBuffer });
+  const result = await parser.getText();
+  await parser.destroy();
 
   return {
-    text: data.text,
-    pages: pageTexts.map((text, i) => ({
-      pageNumber: i + 1,
-      text: text.trim(),
+    text: result.text,
+    pages: (result.pages ?? []).map((p) => ({
+      pageNumber: p.num,
+      text: p.text.trim(),
     })),
     metadata: {
-      pageCount: String(data.numpages ?? pageTexts.length),
-      ...(data.info ? Object.fromEntries(
-        Object.entries(data.info).map(([k, v]) => [k, String(v ?? "")])
-      ) : {}),
+      pageCount: String(result.total ?? result.pages?.length ?? 0),
     },
   };
 }

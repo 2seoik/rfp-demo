@@ -1,20 +1,26 @@
 "use client";
 
 import { useState, useCallback } from "react";
+import { useRouter } from "next/navigation";
 
 export default function NewProjectPage() {
+  const router = useRouter();
   const [name, setName] = useState("");
   const [file, setFile] = useState<File | null>(null);
   const [isDragging, setIsDragging] = useState(false);
   const [isUploading, setIsUploading] = useState(false);
-  const [status, setStatus] = useState<"idle" | "uploading" | "parsing" | "complete" | "error">("idle");
+  const [uploadStatus, setUploadStatus] = useState("");
+  const [error, setError] = useState("");
 
   const handleDrop = useCallback((e: React.DragEvent) => {
     e.preventDefault();
     setIsDragging(false);
     const droppedFile = e.dataTransfer.files[0];
-    if (droppedFile && (droppedFile.type === "application/pdf" || droppedFile.name.endsWith(".docx"))) {
+    if (droppedFile && (droppedFile.name.endsWith(".pdf") || droppedFile.name.endsWith(".docx"))) {
       setFile(droppedFile);
+      setError("");
+    } else {
+      setError("PDF 또는 DOCX 파일만 업로드 가능합니다.");
     }
   }, []);
 
@@ -23,18 +29,40 @@ export default function NewProjectPage() {
     if (!file || !name) return;
 
     setIsUploading(true);
-    setStatus("uploading");
+    setError("");
 
-    // TODO: 실제 API 연동
-    // const formData = new FormData();
-    // formData.append("file", file);
-    // formData.append("name", name);
-    // const res = await fetch("/api/projects", { method: "POST", body: formData });
+    try {
+      setUploadStatus("📄 파일 업로드 중...");
+      const formData = new FormData();
+      formData.append("file", file);
+      formData.append("name", name);
 
-    setTimeout(() => {
-      setStatus("complete");
+      const res = await fetch("/api/upload", {
+        method: "POST",
+        body: formData,
+      });
+
+      if (!res.ok) {
+        const err = await res.json();
+        throw new Error(err.error || "업로드 실패");
+      }
+
+      const data = await res.json();
+      
+      if (data.requirementCount > 0) {
+        setUploadStatus(`✅ ${data.requirementCount}개 요구사항 추출 완료! 이동 중...`);
+      } else {
+        setUploadStatus("⚠️ 분석 완료 (요구사항 0개). 페이지로 이동합니다.");
+      }
+
+      // 잠시 상태 표시 후 이동
+      setTimeout(() => {
+        router.push(`/projects/${data.projectId}`);
+      }, 500);
+    } catch (err: any) {
+      setError(err.message);
       setIsUploading(false);
-    }, 2000);
+    }
   };
 
   return (
@@ -69,11 +97,12 @@ export default function NewProjectPage() {
               setIsDragging(true);
             }}
             onDragLeave={() => setIsDragging(false)}
-            className={`mt-1 flex flex-col items-center justify-center rounded-lg border-2 border-dashed p-8 transition ${
+            className={`mt-1 flex flex-col items-center justify-center rounded-lg border-2 border-dashed p-8 transition cursor-pointer ${
               isDragging
                 ? "border-blue-400 bg-blue-50"
-                : "border-gray-300 bg-gray-50"
+                : "border-gray-300 bg-gray-50 hover:bg-gray-100"
             }`}
+            onClick={() => document.getElementById("file-input")?.click()}
           >
             {file ? (
               <div className="text-center">
@@ -83,7 +112,10 @@ export default function NewProjectPage() {
                 </p>
                 <button
                   type="button"
-                  onClick={() => setFile(null)}
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    setFile(null);
+                  }}
                   className="mt-2 text-sm text-red-500 hover:text-red-700"
                 >
                   파일 변경
@@ -105,39 +137,45 @@ export default function NewProjectPage() {
                   />
                 </svg>
                 <p className="text-sm text-gray-600">
-                  <span className="font-medium text-blue-600 hover:text-blue-500">
-                    클릭하여 파일 선택
-                  </span>{" "}
+                  <span className="font-medium text-blue-600">클릭하여 파일 선택</span>{" "}
                   또는 여기로 드래그
                 </p>
                 <p className="mt-1 text-xs text-gray-400">
                   PDF, DOCX (최대 50MB)
                 </p>
-                <input
-                  type="file"
-                  accept=".pdf,.docx"
-                  onChange={(e) => setFile(e.target.files?.[0] ?? null)}
-                  className="hidden"
-                />
               </>
             )}
+            <input
+              id="file-input"
+              type="file"
+              accept=".pdf,.docx"
+              onChange={(e) => {
+                const f = e.target.files?.[0];
+                if (f) {
+                  setFile(f);
+                  setError("");
+                }
+              }}
+              className="hidden"
+            />
           </div>
         </div>
 
-        {/* 상태 표시 */}
-        {status === "uploading" && (
+        {/* 에러 메시지 */}
+        {error && (
+          <div className="rounded-lg bg-red-50 p-4 text-sm text-red-700">
+            ❌ {error}
+          </div>
+        )}
+
+        {/* 진행 상태 */}
+        {isUploading && (
           <div className="rounded-lg bg-blue-50 p-4 text-sm text-blue-700">
-            📄 파일 업로드 중...
-          </div>
-        )}
-        {status === "parsing" && (
-          <div className="rounded-lg bg-yellow-50 p-4 text-sm text-yellow-700">
-            🔍 AI가 RFP 문서를 분석 중입니다 (30초~2분 소요)...
-          </div>
-        )}
-        {status === "complete" && (
-          <div className="rounded-lg bg-green-50 p-4 text-sm text-green-700">
-            ✅ 분석이 완료되었습니다! 요구사항 매트릭스를 확인해보세요.
+            {uploadStatus}
+            <div className="mt-2 h-1.5 w-full rounded-full bg-blue-200">
+              <div className="h-1.5 animate-pulse rounded-full bg-blue-600" style={{ width: "60%" }}></div>
+            </div>
+            <p className="mt-1 text-xs text-blue-500">PDF 분석 중입니다. 30초~1분 정도 소요됩니다...</p>
           </div>
         )}
 

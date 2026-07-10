@@ -5,6 +5,8 @@ import { sql } from "drizzle-orm";
 export type SearchResult = {
   chunkId: string;
   documentId: string;
+  documentName: string;
+  documentType: string;
   content: string;
   page: number | null;
   section: string | null;
@@ -20,6 +22,7 @@ export async function hybridSearch(
   options: {
     orgId: string;
     documentIds?: string[];
+    docType?: string; // 'rfp' | 'knowledge' | undefined (모두 검색)
     topK?: number;
     keywordWeight?: number;
     semanticWeight?: number;
@@ -37,11 +40,17 @@ export async function hybridSearch(
   const queryEmbedding = await getEmbedding(query);
 
   // Build document filter condition
-  let docFilter = sql``;
+  let filterParts: ReturnType<typeof sql>[] = [];
   if (documentIds && documentIds.length > 0) {
     const ids = documentIds.map((id) => `'${id}'`).join(",");
-    docFilter = sql`AND dc.document_id IN (${sql.raw(ids)})`;
+    filterParts.push(sql`dc.document_id IN (${sql.raw(ids)})`);
   }
+  if (options.docType) {
+    filterParts.push(sql`d.type = ${options.docType}`);
+  }
+  const docFilter = filterParts.length > 0
+    ? sql`AND ${sql.join(filterParts, sql` AND `)}`
+    : sql``;
 
   // 2. Execute hybrid search using raw SQL
   const results = await db.execute(sql`
@@ -67,12 +76,15 @@ export async function hybridSearch(
     SELECT
       c.id,
       c.document_id,
+      d.name AS document_name,
+      d.type AS document_type,
       c.content,
       c.page,
       c.section,
       COALESCE(s.semantic_score, 0) * ${semanticWeight} +
       COALESCE(k.keyword_score, 0) * ${keywordWeight} AS combined_score
     FROM document_chunks c
+    JOIN documents d ON d.id = c.document_id
     LEFT JOIN semantic_scores s ON c.id = s.id
     LEFT JOIN keyword_scores k ON c.id = k.id
     WHERE c.embedding IS NOT NULL
@@ -83,6 +95,8 @@ export async function hybridSearch(
   return (results.rows ?? []).map((row: any) => ({
     chunkId: row.id,
     documentId: row.document_id,
+    documentName: row.document_name,
+    documentType: row.document_type,
     content: row.content,
     page: row.page,
     section: row.section,

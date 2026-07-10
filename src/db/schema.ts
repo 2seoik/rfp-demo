@@ -83,6 +83,7 @@ export const requirements = pgTable("requirements", {
   projectId: uuid("project_id")
     .notNull()
     .references(() => projects.id),
+  originalId: text("original_id"), // RFP 원문의 고유번호 (ECR-001, SFR-005 등)
   sourceText: text("source_text").notNull(),
   type: text("type").notNull().default("general"), // 'general' | 'qualification' | 'security' | 'operation' | 'format'
   priority: text("priority").notNull().default("medium"), // 'essential' | 'recommended' | 'optional'
