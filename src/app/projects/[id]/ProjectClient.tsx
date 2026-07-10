@@ -6,6 +6,7 @@ import { useRouter } from "next/navigation";
 type Requirement = {
   id: string;
   original_id: string | null;
+  name: string | null;
   source_text: string;
   type: string;
   priority: string;
@@ -172,6 +173,18 @@ export default function ProjectClient({ data, autoAnalyze }: Props) {
       <div className="mb-6 flex items-start justify-between">
         <div>
           <h1 className="text-2xl font-bold">{project.name}</h1>
+          {data.documents.length > 0 && (
+            <p className="mt-1 text-sm text-gray-500 flex items-center gap-1">
+              <span>📎</span>
+              <span>{data.documents[0].name}</span>
+            </p>
+          )}
+          {project.period && (
+            <p className="mt-0.5 text-sm text-gray-500 flex items-center gap-1">
+              <span>📅</span>
+              <span>사업기간: {project.period}</span>
+            </p>
+          )}
           <p className="mt-1 text-sm text-gray-500">
             {analyzing
               ? "RFP 분석 중..."
@@ -219,22 +232,22 @@ export default function ProjectClient({ data, autoAnalyze }: Props) {
           </div>
 
           {/* 단계별 상태 */}
-          <div className="mt-4 grid grid-cols-4 gap-2 text-center text-xs">
+          <div className="mt-4 grid grid-cols-5 gap-2 text-center text-xs">
             {[
-              { step: "start", label: "준비", icon: "📋" },
-              { step: "parsing", label: "PDF 파싱", icon: "📄" },
-              { step: "extracting", label: "요구사항 추출", icon: "🤖" },
-              { step: "done", label: "완료", icon: "✅" },
-            ].map((s, i) => {
-              const stepOrder = ["start", "parsing", "extracting", "done"];
-              const currentIdx = stepOrder.indexOf(s.step);
-              const progressIdx = progress >= 100 ? 3 : progress >= 45 ? 2 : progress >= 10 ? 1 : 0;
-              const active = currentIdx <= progressIdx;
+              { step: "start", label: "준비", icon: "📋", threshold: 0 },
+              { step: "parsing", label: "PDF 파싱", icon: "📄", threshold: 5 },
+              { step: "analyzing", label: "AI 분석", icon: "🤖", threshold: 20 },
+              { step: "saving", label: "저장", icon: "💾", threshold: 70 },
+              { step: "done", label: "완료", icon: "✅", threshold: 100 },
+            ].map((s) => {
+              const active = progress >= s.threshold;
               return (
                 <div
                   key={s.step}
-                  className={`rounded-lg p-2 ${
-                    active ? "bg-blue-100 text-blue-800" : "bg-gray-100 text-gray-400"
+                  className={`rounded-lg p-2 transition-colors duration-500 ${
+                    active
+                      ? "bg-blue-100 text-blue-800 ring-1 ring-blue-300"
+                      : "bg-gray-100 text-gray-400"
                   }`}
                 >
                   <div className="text-lg">{s.icon}</div>
@@ -315,7 +328,8 @@ export default function ProjectClient({ data, autoAnalyze }: Props) {
                 <thead className="border-b bg-gray-50">
                   <tr>
                     <th className="px-4 py-3 font-medium text-gray-600">ID</th>
-                    <th className="px-4 py-3 font-medium text-gray-600">요구사항</th>
+                    <th className="px-4 py-3 font-medium text-gray-600">요구사항 명칭</th>
+                    <th className="px-4 py-3 font-medium text-gray-600">요구사항 내용</th>
                     <th className="px-4 py-3 font-medium text-gray-600">유형</th>
                     <th className="px-4 py-3 font-medium text-gray-600">중요도</th>
                     <th className="px-4 py-3 font-medium text-gray-600">신뢰도</th>
@@ -330,7 +344,10 @@ export default function ProjectClient({ data, autoAnalyze }: Props) {
                           {req.original_id || `#${req.order}`}
                         </span>
                       </td>
-                      <td className="max-w-md px-4 py-3"><p className="line-clamp-2 text-gray-900">{req.source_text}</p></td>
+                      <td className="px-4 py-3 whitespace-nowrap">
+                        <span className="text-gray-900 font-medium">{req.name || req.original_id || `요구사항 #${req.order}`}</span>
+                      </td>
+                      <td className="max-w-xs px-4 py-3"><p className="truncate text-gray-600">{req.source_text}</p></td>
                       <td className="px-4 py-3"><span className="text-gray-600">{TYPE_LABELS[req.type] ?? req.type}</span></td>
                       <td className="px-4 py-3">
                         <span className={`inline-block rounded-full px-2 py-0.5 text-xs font-medium ${PRIORITY_BADGES[req.priority]?.class ?? ""}`}>
@@ -353,14 +370,14 @@ export default function ProjectClient({ data, autoAnalyze }: Props) {
             <div className="w-96 shrink-0">
               <div className="rounded-xl border border-gray-200 bg-white p-5">
                 <h3 className="font-semibold text-gray-900">
-                  {selected.original_id ? (
-                    <>
-                      <span className="text-blue-600">{selected.original_id}</span>
-                      <span className="ml-2 text-sm font-normal text-gray-500">#순서 {selected.order}</span>
-                    </>
-                  ) : `요구사항 #${selected.order}`}
+                  {selected.name || selected.original_id || `요구사항 #${selected.order}`}
                 </h3>
-                <p className="mt-2 text-sm text-gray-600 line-clamp-4">{selected.source_text}</p>
+                {selected.original_id && (
+                  <p className="mt-0.5 text-xs text-blue-600 font-mono">{selected.original_id} · 순서 #{selected.order}</p>
+                )}
+                <div className="mt-3 rounded-lg bg-gray-50 p-3 text-sm text-gray-700 whitespace-pre-line max-h-48 overflow-y-auto">
+                  {selected.source_text}
+                </div>
                 <div className="mt-4 flex flex-wrap gap-2">
                   <span className={`rounded-full px-2 py-0.5 text-xs font-medium ${PRIORITY_BADGES[selected.priority]?.class ?? ""}`}>
                     {PRIORITY_BADGES[selected.priority]?.label ?? selected.priority}

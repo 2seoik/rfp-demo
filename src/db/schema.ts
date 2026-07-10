@@ -37,6 +37,7 @@ export const projects = pgTable("projects", {
     .notNull()
     .references(() => organizations.id),
   name: text("name").notNull(),
+  period: text("period"), // 사업기간 (예: 착수일로부터 6개월)
   dueDate: timestamp("due_date"),
   status: text("status").notNull().default("draft"), // 'draft' | 'analyzing' | 'review' | 'final'
   createdAt: timestamp("created_at").defaultNow().notNull(),
@@ -84,6 +85,7 @@ export const requirements = pgTable("requirements", {
     .notNull()
     .references(() => projects.id),
   originalId: text("original_id"), // RFP 원문의 고유번호 (ECR-001, SFR-005 등)
+  name: text("name"), // RFP 원문의 요구사항 명칭 (예: 시스템 아키텍처 설계)
   sourceText: text("source_text").notNull(),
   type: text("type").notNull().default("general"), // 'general' | 'qualification' | 'security' | 'operation' | 'format'
   priority: text("priority").notNull().default("medium"), // 'essential' | 'recommended' | 'optional'

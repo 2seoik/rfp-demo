@@ -6,6 +6,7 @@ import ProjectClient from "./ProjectClient";
 type Requirement = {
   id: string;
   original_id: string | null;
+  name: string | null;
   source_text: string;
   type: string;
   priority: string;
@@ -35,6 +36,7 @@ async function getProjectData(id: string): Promise<ProjectData | null> {
       SELECT
         req.id,
         req.original_id,
+        req.name,
         req.source_text,
         req.type,
         req.priority,

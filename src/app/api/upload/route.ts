@@ -24,10 +24,14 @@ export async function POST(request: Request) {
     const buffer = Buffer.from(await file.arrayBuffer());
     await writeFile(filePath, buffer);
 
-    // 2. Organization 조회
-    const orgRows = (await db.execute(sql`SELECT id FROM organizations LIMIT 1`)).rows ?? [];
-    const org = orgRows[0] as { id: string } | undefined;
-    if (!org) return NextResponse.json({ error: "조직 없음" }, { status: 400 });
+    // 2. Organization 조회 (없으면 자동 생성)
+    let orgRows = (await db.execute(sql`SELECT id FROM organizations LIMIT 1`)).rows ?? [];
+    let org = orgRows[0] as { id: string } | undefined;
+    if (!org) {
+      const [newOrg] = await db.insert(organizations).values({ name: "기본 조직", plan: "free" }).returning();
+      org = newOrg;
+      console.log(`[UPLOAD] Organization 자동 생성: ${org.id}`);
+    }
 
     // 3. Project + Document 생성
     const [project] = await db.insert(projects).values({

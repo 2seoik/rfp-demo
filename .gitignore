@@ -45,3 +45,6 @@ local.db
 
 # uploads
 /uploads/
+
+# logs
+/logs/
