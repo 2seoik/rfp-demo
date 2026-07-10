@@ -1,6 +1,5 @@
 import { db } from "@/db";
 import { sql } from "drizzle-orm";
-import Link from "next/link";
 import { notFound } from "next/navigation";
 import ProjectClient from "./ProjectClient";
 
@@ -82,15 +81,18 @@ async function getProjectData(id: string): Promise<ProjectData | null> {
 
 export default async function ProjectDetailPage({
   params,
+  searchParams,
 }: {
   params: Promise<{ id: string }>;
+  searchParams: Promise<{ analyzing?: string }>;
 }) {
   const { id } = await params;
+  const { analyzing } = await searchParams;
   const data = await getProjectData(id);
 
   if (!data) {
     notFound();
   }
 
-  return <ProjectClient data={data} />;
+  return <ProjectClient data={data} autoAnalyze={analyzing === "1"} />;
 }

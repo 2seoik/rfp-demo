@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useRef } from "react";
+import { useState, useEffect, useRef, useCallback } from "react";
 import { useRouter } from "next/navigation";
 
 type Requirement = {
@@ -31,6 +31,7 @@ type Props = {
     requirements: Requirement[];
     documents: any[];
   };
+  autoAnalyze?: boolean;
 };
 
 const TYPE_LABELS: Record<string, string> = {
@@ -51,7 +52,7 @@ const CONFIDENCE_BADGES: Record<string, { label: string; class: string }> = {
   insufficient: { label: "❌ 근거없음", class: "bg-red-100 text-red-700" },
 };
 
-export default function ProjectClient({ data }: Props) {
+export default function ProjectClient({ data, autoAnalyze }: Props) {
   const router = useRouter();
   const { project, requirements } = data;
   const [activeTab, setActiveTab] = useState<"matrix" | "similar">("matrix");
@@ -60,6 +61,13 @@ export default function ProjectClient({ data }: Props) {
     requirements.length > 0 ? requirements[0].id : null
   );
 
+  // Analysis progress state
+  const [analyzing, setAnalyzing] = useState(autoAnalyze && project.status === "analyzing");
+  const [progress, setProgress] = useState(0);
+  const [progressMessage, setProgressMessage] = useState("");
+  const [analyzeError, setAnalyzeError] = useState("");
+  const eventSourceRef = useRef<EventSource | null>(null);
+
   // Similar RFP state
   const [similarDocs, setSimilarDocs] = useState<SimilarDoc[]>([]);
   const [similarLoading, setSimilarLoading] = useState(false);
@@ -67,6 +75,48 @@ export default function ProjectClient({ data }: Props) {
   const [similarError, setSimilarError] = useState("");
 
   const selected = requirements.find((r) => r.id === selectedReq);
+
+  // ── SSE 분석 스트리밍 ─────────────────────────────────
+  useEffect(() => {
+    if (!analyzing) return;
+
+    const es = new EventSource(`/api/projects/${project.id}/analyze`);
+    eventSourceRef.current = es;
+
+    es.onmessage = (event) => {
+      try {
+        const data = JSON.parse(event.data);
+
+        if (data.progress != null) setProgress(data.progress);
+        if (data.message) setProgressMessage(data.message);
+
+        if (data.step === "done") {
+          setProgressMessage(data.message || "✅ 분석 완료!");
+          setAnalyzing(false);
+          es.close();
+          // 잠시 후 페이지 새로고침하여 결과 표시
+          setTimeout(() => router.refresh(), 1500);
+        }
+
+        if (data.step === "error") {
+          setAnalyzeError(data.message);
+          setAnalyzing(false);
+          es.close();
+        }
+      } catch {}
+    };
+
+    es.onerror = () => {
+      setAnalyzeError("분석 연결이 끊어졌습니다. 페이지를 새로고침 해보세요.");
+      setAnalyzing(false);
+      es.close();
+    };
+
+    return () => {
+      es.close();
+      eventSourceRef.current = null;
+    };
+  }, [analyzing, project.id, router]);
 
   // Load similar RFPs once when tab is activated
   useEffect(() => {
@@ -103,6 +153,16 @@ export default function ProjectClient({ data }: Props) {
     } catch {}
   };
 
+  const handleCancelAnalysis = () => {
+    if (eventSourceRef.current) {
+      eventSourceRef.current.close();
+      eventSourceRef.current = null;
+    }
+    setAnalyzing(false);
+    // 대시보드로 이동
+    router.push("/dashboard");
+  };
+
   return (
     <div className="mx-auto max-w-7xl p-6">
       {/* Header */}
@@ -110,16 +170,96 @@ export default function ProjectClient({ data }: Props) {
         <div>
           <h1 className="text-2xl font-bold">{project.name}</h1>
           <p className="mt-1 text-sm text-gray-500">
-            RFP 분석 결과 · 요구사항 {requirements.length}개 추출
+            {analyzing
+              ? "RFP 분석 중..."
+              : `RFP 분석 결과 · 요구사항 ${requirements.length}개 추출`}
           </p>
         </div>
-        <button
-          onClick={() => setShowDeleteConfirm(true)}
-          className="rounded-lg border border-red-200 px-3 py-1.5 text-sm text-red-600 hover:bg-red-50 transition"
-        >
-          🗑️ 삭제
-        </button>
+        {!analyzing && (
+          <button
+            onClick={() => setShowDeleteConfirm(true)}
+            className="rounded-lg border border-red-200 px-3 py-1.5 text-sm text-red-600 hover:bg-red-50 transition"
+          >
+            🗑️ 삭제
+          </button>
+        )}
       </div>
+
+      {/* ── 분석 진행 오버레이 ─────────────────────────── */}
+      {analyzing && (
+        <div className="mb-6 rounded-xl border border-blue-200 bg-blue-50 p-6">
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-3">
+              <div className="h-5 w-5 animate-spin rounded-full border-2 border-blue-600 border-t-transparent" />
+              <h3 className="font-semibold text-blue-800">AI 분석 진행 중</h3>
+            </div>
+            <button
+              onClick={handleCancelAnalysis}
+              className="text-sm text-gray-500 hover:text-gray-700 underline"
+            >
+              취소하고 대시보드로
+            </button>
+          </div>
+
+          {/* 프로그레스 바 */}
+          <div className="mt-4">
+            <div className="flex items-center justify-between text-sm">
+              <span className="text-blue-700">{progressMessage}</span>
+              <span className="font-mono text-blue-600">{progress}%</span>
+            </div>
+            <div className="mt-2 h-2.5 w-full overflow-hidden rounded-full bg-blue-200">
+              <div
+                className="h-full rounded-full bg-gradient-to-r from-blue-500 to-blue-600 transition-all duration-500 ease-out"
+                style={{ width: `${progress}%` }}
+              />
+            </div>
+          </div>
+
+          {/* 단계별 상태 */}
+          <div className="mt-4 grid grid-cols-4 gap-2 text-center text-xs">
+            {[
+              { step: "start", label: "준비", icon: "📋" },
+              { step: "parsing", label: "PDF 파싱", icon: "📄" },
+              { step: "extracting", label: "요구사항 추출", icon: "🤖" },
+              { step: "done", label: "완료", icon: "✅" },
+            ].map((s, i) => {
+              const stepOrder = ["start", "parsing", "extracting", "done"];
+              const currentIdx = stepOrder.indexOf(s.step);
+              const progressIdx = progress >= 100 ? 3 : progress >= 45 ? 2 : progress >= 10 ? 1 : 0;
+              const active = currentIdx <= progressIdx;
+              return (
+                <div
+                  key={s.step}
+                  className={`rounded-lg p-2 ${
+                    active ? "bg-blue-100 text-blue-800" : "bg-gray-100 text-gray-400"
+                  }`}
+                >
+                  <div className="text-lg">{s.icon}</div>
+                  <div className="mt-0.5 font-medium">{s.label}</div>
+                </div>
+              );
+            })}
+          </div>
+
+          {/* 추가 정보 */}
+          <p className="mt-3 text-xs text-blue-500">
+            분석 중에도 다른 페이지를 자유롭게 이동할 수 있습니다.
+          </p>
+        </div>
+      )}
+
+      {/* ── 분석 에러 ──────────────────────────────────── */}
+      {analyzeError && (
+        <div className="mb-6 rounded-xl border border-red-200 bg-red-50 p-4">
+          <p className="text-sm text-red-700">❌ {analyzeError}</p>
+          <button
+            onClick={() => router.push("/projects/new")}
+            className="mt-2 rounded-lg bg-red-600 px-3 py-1.5 text-sm text-white hover:bg-red-700"
+          >
+            다시 시도
+          </button>
+        </div>
+      )}
 
       {/* Delete Confirmation Modal */}
       {showDeleteConfirm && (
@@ -147,22 +287,24 @@ export default function ProjectClient({ data }: Props) {
         </div>
       )}
 
-      {/* Tabs */}
-      <div className="mb-6 border-b border-gray-200">
-        <nav className="-mb-px flex gap-6">
-          <button onClick={() => setActiveTab("matrix")}
-            className={`pb-3 text-sm font-medium transition ${activeTab === "matrix" ? "border-b-2 border-blue-600 text-blue-600" : "text-gray-500 hover:text-gray-700"}`}>
-            요구사항 매트릭스
-          </button>
-          <button onClick={() => { setActiveTab("similar"); }}
-            className={`pb-3 text-sm font-medium transition ${activeTab === "similar" ? "border-b-2 border-blue-600 text-blue-600" : "text-gray-500 hover:text-gray-700"}`}>
-            🔍 유사 RFP 검색
-          </button>
-        </nav>
-      </div>
+      {/* Tabs (분석 중에는 숨김) */}
+      {!analyzing && (
+        <div className="mb-6 border-b border-gray-200">
+          <nav className="-mb-px flex gap-6">
+            <button onClick={() => setActiveTab("matrix")}
+              className={`pb-3 text-sm font-medium transition ${activeTab === "matrix" ? "border-b-2 border-blue-600 text-blue-600" : "text-gray-500 hover:text-gray-700"}`}>
+              요구사항 매트릭스
+            </button>
+            <button onClick={() => { setActiveTab("similar"); }}
+              className={`pb-3 text-sm font-medium transition ${activeTab === "similar" ? "border-b-2 border-blue-600 text-blue-600" : "text-gray-500 hover:text-gray-700"}`}>
+              🔍 유사 RFP 검색
+            </button>
+          </nav>
+        </div>
+      )}
 
       {/* Matrix Tab */}
-      {activeTab === "matrix" && (
+      {!analyzing && activeTab === "matrix" && (
         <div className="flex gap-6">
           <div className="flex-1">
             <div className="overflow-hidden rounded-xl border border-gray-200 bg-white">
@@ -239,7 +381,7 @@ export default function ProjectClient({ data }: Props) {
       )}
 
       {/* Similar RFP Tab */}
-      {activeTab === "similar" && (
+      {!analyzing && activeTab === "similar" && (
         <div>
           {similarLoading ? (
             <div className="rounded-xl border border-gray-200 bg-white p-12 text-center">

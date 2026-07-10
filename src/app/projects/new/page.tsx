@@ -48,16 +48,12 @@ export default function NewProjectPage() {
       }
 
       const data = await res.json();
-      
-      if (data.requirementCount > 0) {
-        setUploadStatus(`✅ ${data.requirementCount}개 요구사항 추출 완료! 이동 중...`);
-      } else {
-        setUploadStatus("⚠️ 분석 완료 (요구사항 0개). 페이지로 이동합니다.");
-      }
 
-      // 잠시 상태 표시 후 이동
+      setUploadStatus("✅ 업로드 완료! 분석 페이지로 이동합니다...");
+
+      // 분석 페이지로 이동 (프로젝트 페이지에서 자동으로 SSE 분석 시작)
       setTimeout(() => {
-        router.push(`/projects/${data.projectId}`);
+        router.push(`/projects/${data.projectId}?analyzing=1`);
       }, 500);
     } catch (err: any) {
       setError(err.message);
@@ -168,14 +164,14 @@ export default function NewProjectPage() {
           </div>
         )}
 
-        {/* 진행 상태 */}
+        {/* 업로드 상태 */}
         {isUploading && (
           <div className="rounded-lg bg-blue-50 p-4 text-sm text-blue-700">
             {uploadStatus}
             <div className="mt-2 h-1.5 w-full rounded-full bg-blue-200">
-              <div className="h-1.5 animate-pulse rounded-full bg-blue-600" style={{ width: "60%" }}></div>
+              <div className="h-1.5 animate-pulse rounded-full bg-blue-600" style={{ width: "80%" }}></div>
             </div>
-            <p className="mt-1 text-xs text-blue-500">PDF 분석 중입니다. 30초~1분 정도 소요됩니다...</p>
+            <p className="mt-1 text-xs text-blue-500">파일 업로드 중입니다...</p>
           </div>
         )}
 

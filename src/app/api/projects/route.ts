@@ -31,18 +31,19 @@ export async function GET() {
 export async function POST(request: Request) {
   try {
     const body = await request.json();
-    const [org] = await db.execute(sql`
+    const orgResult = await db.execute(sql`
       SELECT id FROM organizations LIMIT 1
     `);
+    const orgRow = (orgResult.rows ?? [])[0] as { id: string } | undefined;
 
-    if (!org.rows?.[0]) {
+    if (!orgRow) {
       return NextResponse.json({ error: "No organization found" }, { status: 400 });
     }
 
     const [project] = await db
       .insert(projects)
       .values({
-        orgId: org.rows[0].id,
+        orgId: orgRow.id,
         name: body.name,
         status: "draft",
       })

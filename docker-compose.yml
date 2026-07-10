@@ -6,7 +6,7 @@ services:
     container_name: rfp-demo-db
     restart: unless-stopped
     ports:
-      - "5432:5432"
+      - "5433:5432"
     environment:
       POSTGRES_USER: rfpuser
       POSTGRES_PASSWORD: rfppass
