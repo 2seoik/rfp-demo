@@ -512,7 +512,7 @@ RETURNING *
 
 ```
 [progress 5%]  PDF 파싱
-  → pdf-parse로 텍스트 추출 → cleanText()로 정제
+  → pdf-parse로 텍스트 추출 → cleanText()로 정제ㅁ
 
 [progress 15%] 문서 헤더 추출 (사업기간용, 앞 2000자)
 

@@ -1,0 +1,1481 @@
+# RFP Demo 기술 명세서
+
+> AI 기반 RFP(Request For Proposal) 문서 분석 플랫폼의 구현·운영 기준을 정의한다. 이 문서는 신규 개발자와 AI 에이전트가 별도 설명 없이 프로젝트 구조를 이해하고 기능을 수정하거나 확장할 수 있도록 작성되었다.
+
+- 기준 문서 갱신일: 2026-07-10
+- 패키지 매니저: `pnpm`
+- 런타임 구성: Next.js 애플리케이션 + 독립 Worker + PostgreSQL
+
+---
+
+## 1. 제품 정의
+
+### 1.1 목적
+
+사용자가 PDF 또는 DOCX 형식의 RFP 문서를 업로드하면 시스템이 문서 내용을 분석하여 요구사항을 구조화하고, 검토 가능한 요구사항 매트릭스와 유사 RFP 검색 결과를 제공한다.
+
+### 1.2 핵심 사용자 흐름
+
+1. 사용자가 프로젝트명과 RFP 파일을 업로드한다.
+2. 서버가 프로젝트, 문서, 분석 Job을 생성한다.
+3. 별도 Worker가 Job을 가져와 문서를 파싱하고 LLM 분석을 수행한다.
+4. 프론트엔드는 분석 상태 API를 2초 간격으로 polling한다.
+5. 분석이 완료되면 요구사항 매트릭스와 사업기간을 표시한다.
+6. 사용자는 요구사항 상세와 유사 RFP 검색 결과를 검토한다.
+
+### 1.3 핵심 기능
+
+- PDF 및 DOCX 파일 업로드
+- 비동기 RFP 분석
+- 요구사항 ID, 명칭, 상세, 유형, 중요도 추출
+- 사업기간 추출
+- 분석 진행률 표시
+- 요구사항 매트릭스 조회
+- 프로젝트 및 분석 결과 삭제
+- PostgreSQL Full-Text Search 기반 유사 RFP 검색
+
+### 1.4 비목표
+
+현재 범위에는 다음 기능이 포함되지 않는다.
+
+- 사용자 인증 및 권한 관리 완성
+- 요구사항 담당자 배정 워크플로
+- 최종 제안서 자동 생성
+- 벡터 임베딩 기반 의미 검색
+- 분산 메시지 큐 또는 외부 Job Queue 도입
+- 다중 Worker 자동 확장
+
+---
+
+## 2. 시스템 아키텍처
+
+```text
+Browser
+  │
+  │ HTTP / 2초 Polling
+  ▼
+Next.js 16 App Router
+  ├─ Server Components
+  ├─ Client Components
+  └─ Route Handlers
+          │
+          │ SQL
+          ▼
+PostgreSQL 16 + pgvector
+          ▲
+          │ SQL Job Polling
+          │
+Independent Worker (tsx)
+  ├─ PDF/DOCX parsing
+  ├─ LLM calls
+  ├─ requirement normalization
+  └─ result persistence
+```
+
+### 2.1 설계 원칙
+
+- 분석 작업은 HTTP 요청 수명 주기와 분리한다.
+- Worker가 중단되어도 애플리케이션 서버는 정상 동작해야 한다.
+- Job 상태는 DB를 단일 진실 공급원으로 사용한다.
+- 동일 Job은 하나의 Worker만 처리해야 한다.
+- 분석 중 페이지를 이탈하거나 재진입해도 진행 상태를 복구해야 한다.
+- LLM 일부 청크 실패가 전체 분석을 즉시 중단시키지 않도록 한다.
+- 분석 결과는 원문 추적이 가능하도록 원본 요구사항 ID와 상세 텍스트를 보존한다.
+
+---
+
+## 3. 기술 스택
+
+| 영역 | 기술 | 버전/설정 |
+|---|---|---|
+| Web Framework | Next.js App Router | 16.2.10 |
+| UI | React | 19.2.7 |
+| Styling | Tailwind CSS | 4.3.2 |
+| Language | TypeScript | 7.0.2 |
+| Database | PostgreSQL + pgvector | PostgreSQL 16 |
+| ORM | Drizzle ORM | 0.45.2 |
+| Migration/Schema Tool | drizzle-kit | 0.31.10 |
+| DB Driver | `pg` | 8.22.0 |
+| PDF Parser | `pdf-parse` | 2.4.5 |
+| DOCX Parser | `mammoth` | 1.12.0 |
+| LLM SDK | OpenAI SDK | 6.45.0 |
+| Worker Runtime | `tsx` | 4.23.0 |
+| Package Manager | pnpm | 10.32.1 |
+
+### 3.1 현재 LLM 기본 설정
+
+```env
+LLM_API_BASE="https://opencode.ai/zen/go/v1"
+LLM_MODEL="minimax-m2.7"
+```
+
+현재 모델은 응답 속도는 빠르지만 한국어 RFP 요구사항 추출 커버리지가 낮다. 운영 품질 기준을 충족하려면 모델 교체 또는 추출 파이프라인 개선이 필요하다.
+
+---
+
+## 4. 저장소 구조
+
+```text
+rfp-demo/
+├── .env
+├── docker-compose.yml
+├── drizzle.config.ts
+├── package.json
+├── tsconfig.json
+├── src/
+│   ├── app/
+│   │   ├── api/
+│   │   │   ├── upload/route.ts
+│   │   │   └── projects/
+│   │   │       ├── route.ts
+│   │   │       └── [id]/
+│   │   │           ├── route.ts
+│   │   │           ├── analyze-status/route.ts
+│   │   │           └── similar/route.ts
+│   │   ├── dashboard/
+│   │   ├── projects/new/
+│   │   ├── projects/[id]/
+│   │   ├── library/
+│   │   └── settings/
+│   ├── db/
+│   │   ├── index.ts
+│   │   └── schema.ts
+│   └── lib/
+│       ├── env.ts
+│       ├── llm.ts
+│       ├── parser.ts
+│       ├── chunker.ts
+│       ├── prompts.ts
+│       ├── search.ts
+│       └── services/
+├── scripts/
+│   ├── worker.ts
+│   ├── seed-full.ts
+│   ├── seed-utils.ts
+│   ├── seed.sh
+│   └── start.sh
+├── docs/
+├── logs/
+├── uploads/
+└── drizzle/
+```
+
+### 4.1 디렉터리 책임
+
+| 경로 | 책임 |
+|---|---|
+| `src/app` | UI, 페이지 라우팅, API Route Handlers |
+| `src/db` | Drizzle 스키마와 DB 연결 |
+| `src/lib` | 파서, LLM, 검색, 분석 서비스 |
+| `scripts/worker.ts` | Job polling 및 RFP 분석 실행 |
+| `uploads` | 업로드된 원본 파일 저장 |
+| `logs` | 통합 실행 스크립트 로그 |
+| `drizzle` | Drizzle 생성 산출물 |
+
+---
+
+## 5. 도메인 모델
+
+### 5.1 엔터티 관계
+
+```text
+organizations 1 ── N projects
+organizations 1 ── N users
+organizations 1 ── N documents
+organizations 1 ── N audit_logs
+projects      1 ── N requirements
+projects      1 ── N documents
+projects      1 ── N jobs
+documents     1 ── N document_chunks
+document_chunks 1 ── N citations
+requirements  1 ── N responses
+responses     1 ── N citations
+```
+
+### 5.2 상태 정의
+
+#### Project status
+
+```text
+draft → analyzing → review → final
+```
+
+- `draft`: 분석 전, 분석 결과 없음, 또는 분석 실패 후 복구 상태
+- `analyzing`: Worker 분석 진행 중
+- `review`: 하나 이상의 요구사항 추출 완료
+- `final`: 사용자가 검토 및 확정을 완료한 상태
+
+#### Document parsed status
+
+```text
+pending → parsing → ready
+                  ↘ error
+```
+
+#### Job status
+
+```text
+pending → processing → completed
+                     ↘ failed
+```
+
+#### Requirement status
+
+```text
+pending → in_progress → answered → confirmed
+```
+
+---
+
+## 6. 데이터베이스 명세
+
+모든 주요 엔터티의 기본 키는 UUID를 사용한다. 시간 컬럼은 PostgreSQL timestamp를 사용하며 생성 시점에 `NOW()` 또는 Drizzle `defaultNow()`를 적용한다.
+
+### 6.1 `organizations`
+
+| 컬럼 | 타입 | 제약조건 |
+|---|---|---|
+| `id` | uuid | PK, default random |
+| `name` | text | NOT NULL |
+| `plan` | text | NOT NULL, default `free` |
+| `created_at` | timestamp | default now |
+| `updated_at` | timestamp | default now |
+
+### 6.2 `projects`
+
+| 컬럼 | 타입 | 제약조건/설명 |
+|---|---|---|
+| `id` | uuid | PK, default random |
+| `org_id` | uuid | NOT NULL, FK → organizations |
+| `name` | text | NOT NULL |
+| `period` | text | nullable, LLM 또는 fallback으로 추출한 사업기간 |
+| `status` | text | NOT NULL, default `draft` |
+| `due_date` | timestamp | nullable |
+| `created_at` | timestamp | default now |
+| `updated_at` | timestamp | default now |
+
+### 6.3 `documents`
+
+| 컬럼 | 타입 | 제약조건/설명 |
+|---|---|---|
+| `id` | uuid | PK |
+| `org_id` | uuid | NOT NULL, FK → organizations |
+| `project_id` | uuid | nullable, FK → projects |
+| `type` | text | NOT NULL, default `rfp` |
+| `name` | text | NOT NULL, 원본 파일명 |
+| `file_url` | text | NOT NULL, 서버 파일 경로 |
+| `parsed_status` | text | default `pending` |
+| `created_at` | timestamp | default now |
+
+### 6.4 `document_chunks`
+
+| 컬럼 | 타입 | 제약조건/설명 |
+|---|---|---|
+| `id` | uuid | PK |
+| `document_id` | uuid | NOT NULL, FK → documents |
+| `content` | text | NOT NULL |
+| `embedding` | vector(1536) | nullable, 현재 미사용 |
+| `page` | integer | nullable |
+| `section` | text | nullable |
+| `metadata` | text | nullable, JSON 문자열 |
+| `created_at` | timestamp | default now |
+
+### 6.5 `requirements`
+
+| 컬럼 | 타입 | 제약조건/설명 |
+|---|---|---|
+| `id` | uuid | PK |
+| `project_id` | uuid | NOT NULL, FK → projects |
+| `original_id` | text | nullable, 예: `ECR-001` |
+| `name` | text | nullable |
+| `source_text` | text | NOT NULL, 최대 1,000자 저장 권장 |
+| `type` | text | NOT NULL, default `general` |
+| `priority` | text | NOT NULL, default `medium` |
+| `status` | text | NOT NULL, default `pending` |
+| `assignee` | text | nullable |
+| `order` | integer | nullable |
+| `created_at` | timestamp | default now |
+| `updated_at` | timestamp | default now |
+
+허용 `type` 값:
+
+```text
+technical | security | operation | qualification | format | general
+```
+
+허용 `priority` 값:
+
+```text
+essential | recommended | optional
+```
+
+### 6.6 `responses`
+
+| 컬럼 | 타입 | 제약조건/설명 |
+|---|---|---|
+| `id` | uuid | PK |
+| `requirement_id` | uuid | NOT NULL, FK → requirements |
+| `draft_text` | text | nullable |
+| `final_text` | text | nullable |
+| `confidence_label` | text | NOT NULL, default `insufficient` |
+| `created_at` | timestamp | default now |
+| `updated_at` | timestamp | default now |
+
+허용 `confidence_label` 값:
+
+```text
+sufficient | partial | needs_review | insufficient
+```
+
+### 6.7 `citations`
+
+| 컬럼 | 타입 | 제약조건/설명 |
+|---|---|---|
+| `id` | uuid | PK |
+| `response_id` | uuid | NOT NULL, FK → responses |
+| `chunk_id` | uuid | NOT NULL, FK → document_chunks |
+| `score` | integer | nullable, 0~100 |
+| `created_at` | timestamp | default now |
+
+### 6.8 `jobs`
+
+| 컬럼 | 타입 | 제약조건/설명 |
+|---|---|---|
+| `id` | uuid | PK |
+| `type` | text | NOT NULL, 현재 `rfp_analyze` |
+| `status` | text | NOT NULL, default `pending` |
+| `project_id` | uuid | nullable, FK → projects |
+| `document_id` | uuid | nullable, FK → documents |
+| `progress` | integer | default 0, 0~100 |
+| `message` | text | nullable |
+| `error` | text | nullable |
+| `result` | text | nullable, JSON 문자열 |
+| `retry_count` | integer | default 0 |
+| `created_at` | timestamp | default now |
+| `updated_at` | timestamp | default now |
+
+### 6.9 `audit_logs`
+
+| 컬럼 | 타입 | 제약조건/설명 |
+|---|---|---|
+| `id` | uuid | PK |
+| `org_id` | uuid | NOT NULL, FK → organizations |
+| `actor_id` | uuid | NOT NULL, FK → users |
+| `action` | text | NOT NULL |
+| `target` | text | NOT NULL |
+| `created_at` | timestamp | default now |
+
+권장 `action` 값:
+
+```text
+upload | download | delete | analyze | export
+```
+
+### 6.10 데이터 무결성 요구사항
+
+- `jobs.progress`는 0 이상 100 이하이어야 한다.
+- `requirements.original_id`는 저장 전 정규화한다.
+- 동일 프로젝트 내 같은 `original_id`는 중복 저장하지 않는다.
+- 프로젝트 삭제 시 종속 데이터가 남지 않아야 한다.
+- 현재 구현에서 수동 삭제 순서는 다음을 따른다.
+
+```text
+citations
+→ responses
+→ requirements
+→ document_chunks
+→ jobs
+→ documents
+→ projects
+```
+
+가능하면 FK에 적절한 `ON DELETE CASCADE`를 적용해 애플리케이션 삭제 로직을 단순화한다.
+
+---
+
+## 7. API 명세
+
+모든 API는 JSON을 반환하며, 파일 업로드만 `multipart/form-data`를 사용한다.
+
+### 7.1 `POST /api/upload`
+
+RFP 파일을 저장하고 프로젝트, 문서, 분석 Job을 생성한다. 조직이 없으면 기본 조직을 자동 생성한다.
+
+#### Request
+
+```text
+Content-Type: multipart/form-data
+```
+
+| 필드 | 필수 | 설명 |
+|---|---|---|
+| `file` | 예 | PDF 또는 DOCX |
+| `name` | 아니오 | 기본값 `새 RFP 분석` |
+
+#### Success: `201 Created`
+
+```json
+{
+  "projectId": "6a6bf01c-b17f-411d-b2a5-64f6300dbbf1",
+  "message": "파일 업로드 완료. 분석을 시작합니다."
+}
+```
+
+#### Validation error: `400 Bad Request`
+
+```json
+{ "error": "파일이 없습니다." }
+```
+
+```json
+{ "error": "PDF 또는 DOCX 파일만 지원합니다." }
+```
+
+#### 동작 요구사항
+
+- 업로드 허용 확장자는 `.pdf`, `.docx`이다.
+- 실제 MIME 타입과 확장자를 모두 검증하는 것을 권장한다.
+- 업로드 파일명 충돌을 방지하기 위해 UUID 기반 저장명을 사용한다.
+- 프로젝트 상태는 Job 생성과 함께 `analyzing`으로 설정한다.
+- 문서 상태는 `pending`으로 시작한다.
+- 파일 저장 또는 DB 트랜잭션 실패 시 생성된 중간 산출물을 정리한다.
+
+### 7.2 `GET /api/projects`
+
+프로젝트 목록을 최신 수정일 또는 생성일 역순으로 반환한다.
+
+```json
+[
+  {
+    "id": "uuid",
+    "name": "프로젝트명",
+    "status": "analyzing",
+    "requirement_count": 17,
+    "document_count": 1,
+    "created_at": "2026-07-10T00:00:00.000Z",
+    "updated_at": "2026-07-10T00:00:00.000Z"
+  }
+]
+```
+
+### 7.3 `POST /api/projects`
+
+파일 없이 프로젝트만 생성한다.
+
+```json
+{ "name": "프로젝트명" }
+```
+
+### 7.4 `GET /api/projects/:id`
+
+프로젝트, 요구사항, 응답, 인용, 문서를 한 번에 반환한다.
+
+```json
+{
+  "project": {
+    "id": "uuid",
+    "name": "프로젝트명",
+    "status": "review",
+    "period": "계약 체결일로부터 150일"
+  },
+  "requirements": [
+    {
+      "id": "uuid",
+      "original_id": "ECR-001",
+      "name": "시스템 공통 요구사항",
+      "source_text": "상세 내용...",
+      "type": "technical",
+      "priority": "essential",
+      "order": 1,
+      "draft_text": null,
+      "final_text": null,
+      "confidence_label": "insufficient",
+      "citations": []
+    }
+  ],
+  "documents": [
+    {
+      "id": "uuid",
+      "name": "파일명.pdf",
+      "type": "rfp",
+      "parsed_status": "ready",
+      "created_at": "2026-07-10T00:00:00.000Z"
+    }
+  ]
+}
+```
+
+#### 정렬 요구사항
+
+요구사항은 다음 우선순위로 정렬한다.
+
+1. `order ASC NULLS LAST`
+2. `original_id ASC`
+3. `created_at ASC`
+
+### 7.5 `DELETE /api/projects/:id`
+
+프로젝트와 모든 종속 데이터를 삭제한다.
+
+#### Success
+
+```json
+{ "success": true }
+```
+
+#### 요구사항
+
+- 존재하지 않는 프로젝트는 `404`를 반환한다.
+- 전체 삭제는 하나의 DB 트랜잭션에서 수행한다.
+- DB 삭제 성공 후 업로드 원본 파일도 삭제하는 것을 권장한다.
+
+### 7.6 `GET /api/projects/:id/analyze-status`
+
+해당 프로젝트의 최신 분석 Job 상태를 반환한다.
+
+```json
+{
+  "status": "processing",
+  "progress": 45,
+  "message": "AI 분석 중... (청크 3/7)",
+  "error": null,
+  "result": null,
+  "retry_count": 0,
+  "created_at": "2026-07-10T00:00:00.000Z",
+  "updated_at": "2026-07-10T00:00:00.000Z"
+}
+```
+
+Job이 없으면 다음 형태를 사용한다.
+
+```json
+{
+  "status": "not_found",
+  "progress": 0,
+  "message": null,
+  "error": null
+}
+```
+
+### 7.7 `GET /api/projects/:id/similar`
+
+현재 프로젝트 요구사항과 같은 조직의 다른 RFP 문서를 비교해 유사 문서를 반환한다.
+
+#### 검색 절차
+
+1. 현재 프로젝트의 `requirements.source_text`를 결합한다.
+2. 불용어를 제거하고 검색 키워드를 구성한다.
+3. 다른 프로젝트의 `document_chunks.content`에 `to_tsvector()` 검색을 수행한다.
+4. `ts_rank()`로 청크 점수를 계산한다.
+5. 문서별 평균 또는 가중 평균 점수로 그룹화한다.
+6. 현재 프로젝트의 문서는 결과에서 제외한다.
+
+#### 권장 Response
+
+```json
+[
+  {
+    "documentId": "uuid",
+    "documentName": "유사 RFP.pdf",
+    "projectId": "uuid",
+    "projectName": "유사 프로젝트",
+    "similarity": 82,
+    "matches": [
+      {
+        "chunkId": "uuid",
+        "content": "매칭된 문서 내용...",
+        "score": 0.82
+      }
+    ]
+  }
+]
+```
+
+---
+
+## 8. 프론트엔드 명세
+
+### 8.1 페이지 구성
+
+```text
+layout.tsx
+├── page.tsx
+├── dashboard/page.tsx
+│   └── DeleteButton.tsx
+├── projects/new/page.tsx
+└── projects/[id]/page.tsx
+    └── ProjectClient.tsx
+```
+
+### 8.2 Server/Client Component 경계
+
+- 데이터 최초 조회는 Server Component에서 수행한다.
+- 업로드 폼, 삭제 버튼, polling, 선택 상태는 Client Component에서 처리한다.
+- 분석 완료 후 `router.refresh()`로 서버 데이터를 다시 가져온다.
+
+### 8.3 `ProjectClient` Props
+
+```typescript
+type Props = {
+  data: {
+    project: {
+      id: string;
+      name: string;
+      status: "draft" | "analyzing" | "review" | "final";
+      period: string | null;
+    };
+    requirements: Requirement[];
+    documents: DocumentSummary[];
+  };
+  autoAnalyze?: boolean;
+};
+```
+
+`any` 사용은 점진적으로 제거하고 API 응답 타입을 공유 타입으로 정의한다.
+
+### 8.4 상태 관리
+
+| 상태 | 설명 |
+|---|---|
+| `analyzing` | `autoAnalyze || project.status === "analyzing"` |
+| `progress` | 0~100 |
+| `progressMessage` | Worker 단계 메시지 |
+| `selectedReq` | 우측 상세에 표시할 요구사항 ID |
+
+### 8.5 Polling 규칙
+
+- `analyzing === true`일 때 2초 간격으로 상태 API를 호출한다.
+- `completed` 수신 시 polling을 중단하고 `router.refresh()`를 호출한다.
+- `failed` 수신 시 polling을 중단하고 오류 메시지를 표시한다.
+- 컴포넌트 unmount 시 timer를 정리한다.
+- 네트워크 오류가 일시적으로 발생해도 즉시 분석 실패로 처리하지 않는다.
+- 동일 요청이 중첩되지 않도록 이전 요청 완료 후 다음 polling을 수행하는 방식을 권장한다.
+
+### 8.6 분석 진행 UI
+
+분석 중에는 요구사항 매트릭스와 유사 문서 탭을 숨긴다.
+
+| 단계 | 기준 진행률 | 표시 |
+|---|---:|---|
+| 준비 | 0 | 📋 |
+| 문서 파싱 | 5 | 📄 |
+| AI 분석 | 20 | 🤖 |
+| 저장 | 70 | 💾 |
+| 완료 | 100 | ✅ |
+
+진행률은 Worker가 제공하는 실제 값만 사용하며 프론트에서 임의 증가시키지 않는다.
+
+### 8.7 요구사항 매트릭스
+
+필수 컬럼:
+
+| ID | 요구사항 명칭 | 요구사항 내용 | 유형 | 중요도 | 신뢰도 |
+|---|---|---|---|---|---|
+
+- `source_text`는 테이블에서 말줄임 처리한다.
+- 행 선택 시 우측 상세 패널에 전체 내용을 표시한다.
+- 상세 패널은 `sticky top-6`를 사용한다.
+- 상세 패널 최대 높이는 `calc(100vh - 8rem)`로 제한하고 내부 스크롤을 제공한다.
+- 모바일에서는 우측 패널을 하단 또는 별도 상세 화면으로 전환한다.
+
+### 8.8 오류 상태
+
+다음 상태를 사용자에게 구분해 표시해야 한다.
+
+- 업로드 유효성 오류
+- 서버 저장 오류
+- Worker 미실행 또는 Job 대기 상태
+- 분석 재시도 중
+- 분석 최종 실패
+- 분석 완료됐지만 요구사항이 0건인 상태
+- 프로젝트 또는 문서를 찾을 수 없는 상태
+
+---
+
+## 9. Worker 명세
+
+### 9.1 실행 방식
+
+```bash
+pnpm worker
+```
+
+개발 중 watch 모드:
+
+```bash
+pnpm tsx watch scripts/worker.ts
+```
+
+### 9.2 Main Loop
+
+```typescript
+async function main() {
+  await recoverStuckJobs();
+
+  while (true) {
+    await poll();
+    await sleep(2000);
+  }
+}
+```
+
+Worker 시작 시 오래된 `processing` Job을 복구해야 한다. 권장 기준은 `updated_at`이 일정 시간 이상 갱신되지 않은 Job이다.
+
+### 9.3 Job 획득
+
+동시 Worker 환경에서 동일 Job 중복 처리를 방지한다.
+
+```sql
+UPDATE jobs
+SET status = 'processing',
+    updated_at = NOW()
+WHERE id = (
+  SELECT id
+  FROM jobs
+  WHERE status = 'pending'
+  ORDER BY created_at ASC
+  LIMIT 1
+  FOR UPDATE SKIP LOCKED
+)
+RETURNING *;
+```
+
+위 쿼리는 트랜잭션 안에서 실행하는 것을 권장한다.
+
+### 9.4 RFP 분석 파이프라인
+
+```text
+5%   문서 파싱
+15%  헤더 텍스트 추출
+20%  요구사항 섹션 탐색
+30%  사업기간 추출
+40~75% 청크별 요구사항 추출
+80~95% DB 저장
+100% 완료
+```
+
+#### 단계 1. 문서 파싱
+
+- `.pdf`: `pdf-parse` 사용
+- `.docx`: `mammoth.extractRawText()` 사용
+- 그 외 확장자는 실패 처리
+- 파싱 시작 시 `documents.parsed_status = 'parsing'`
+- 파싱 실패 시 `documents.parsed_status = 'error'`
+- `cleanText()`로 제어문자, 과도한 공백, 탭 노이즈를 정리한다.
+
+#### 단계 2. 헤더 추출
+
+문서 앞 2,000자를 `headerText`로 사용한다. 사업기간 추출에만 사용하며, 요구사항 분석용 텍스트와 분리한다.
+
+#### 단계 3. 요구사항 섹션 탐색
+
+다음 후보 위치를 탐색하고 가장 앞선 유효 위치를 선택한다.
+
+1. 문서 앞 8% 이후에 등장하는 `/[A-Z]{2,4}-\d{3}/g` 최초 위치
+2. `요구사항 고유번호`
+3. `요구사항 명칭`
+4. 문서 앞 10% 이후의 다음 키워드
+   - `요구사항 상세`
+   - `요구사항 목록`
+   - `주요 과업`
+   - `요구사항 총괄표`
+
+선택 위치 200자 앞부터 최대 20,000자를 추출한다. 후보가 없으면 문서 전체 또는 합리적인 최대 길이를 fallback으로 사용해야 한다.
+
+#### 단계 4. 사업기간 추출
+
+1차로 정규식 또는 키워드 기반 추출을 시도한다.
+
+권장 검색 키워드:
+
+```text
+사업기간 | 수행기간 | 계약기간 | 과업기간 | 용역기간
+```
+
+정규식 결과가 없거나 모호하면 `headerText`를 LLM에 전달한다.
+
+LLM 응답 형식:
+
+```json
+{ "period": "계약 체결일로부터 150일" }
+```
+
+사업기간 추출 실패는 전체 Job 실패 사유가 아니다.
+
+#### 단계 5. 청크 분할
+
+현재 기본값:
+
+```typescript
+splitIntoChunks(excerpt, 3500, 300)
+```
+
+```typescript
+function splitIntoChunks(
+  text: string,
+  chunkSize = 4000,
+  overlap = 500,
+): string[] {
+  const chunks: string[] = [];
+
+  for (let i = 0; i < text.length; i += chunkSize - overlap) {
+    chunks.push(text.slice(i, i + chunkSize));
+    if (i + chunkSize >= text.length) break;
+  }
+
+  return chunks;
+}
+```
+
+추출 커버리지 개선 실험 시 다음 순서로 조정한다.
+
+1. 청크 크기 `3500 → 2500`
+2. overlap `300 → 400~500`
+3. `max_tokens 4096 → 8192`
+4. 모델 변경
+
+#### 단계 6. LLM 호출
+
+```typescript
+async function callLLM(
+  client: OpenAI,
+  model: string,
+  systemPrompt: string,
+  userContent: string,
+  maxTokens: number,
+  timeoutMs: number,
+) {
+  return client.chat.completions.create(
+    {
+      model,
+      messages: [
+        { role: "system", content: systemPrompt },
+        { role: "user", content: userContent },
+      ],
+      max_tokens: maxTokens,
+      temperature: 0.1,
+    } as any,
+    { signal: AbortSignal.timeout(timeoutMs) },
+  );
+}
+```
+
+요구사항 추출 호출 기본값:
+
+```text
+max_tokens = 4096
+timeout = 30000ms
+temperature = 0.1
+```
+
+#### 단계 7. LLM 출력 계약
+
+LLM은 JSON 외의 텍스트를 반환하지 않도록 지시한다.
+
+```json
+{
+  "requirements": [
+    {
+      "id": "SFR-001",
+      "name": "사용자 인증 기능",
+      "sourceText": "원문 요구사항 상세",
+      "type": "security",
+      "priority": "essential"
+    }
+  ]
+}
+```
+
+각 필드 규칙:
+
+- `id`: 원문 ID. 생성하거나 추정하지 않는다.
+- `name`: 원문 명칭을 우선 사용한다.
+- `sourceText`: 원문 의미를 보존하고 최대 1,000자로 제한한다.
+- `type`: 허용 enum 중 하나로 정규화한다.
+- `priority`: 허용 enum 중 하나로 정규화한다.
+
+#### 단계 8. 정규화 및 필터링
+
+```typescript
+const VALID_REQUIREMENT_ID = /^[A-Z]{2,4}-\d{3}$/;
+```
+
+처리 순서:
+
+1. 코드 블록 및 불필요한 접두/접미 텍스트 제거
+2. JSON 파싱
+3. 필드명 정규화
+4. 빈 ID 제거
+5. ID uppercase 변환
+6. ID 정규식 검증
+7. 동일 ID 중복 제거
+8. 문서 등장 순서 또는 ID 기준 정렬
+
+중복 ID가 여러 청크에서 발견되면 더 긴 `sourceText` 또는 더 완전한 필드를 가진 항목을 우선한다.
+
+#### 단계 9. DB 저장
+
+하나의 트랜잭션에서 다음을 처리한다.
+
+1. 기존 미완성 분석 결과 정리 여부 결정
+2. `projects.period` 갱신
+3. `requirements` 일괄 INSERT
+4. 각 요구사항에 대응하는 `responses` INSERT
+5. `documents.parsed_status = 'ready'`
+6. 요구사항이 있으면 `projects.status = 'review'`
+7. 요구사항이 없으면 오류 또는 `draft` 처리
+8. `jobs.status = 'completed'`, `progress = 100`
+
+`responses.confidence_label` 기본값은 `insufficient`이다.
+
+### 9.5 부분 실패 정책
+
+- 일부 청크 실패: 로그 기록 후 다음 청크 진행
+- 사업기간 추출 실패: 무시하고 계속 진행
+- 모든 청크 실패: Job을 성공 처리하지 않고 명시적으로 실패 처리
+- LLM JSON 파싱 실패: 해당 청크를 1회 보정 재시도하는 방식을 권장
+- DB 저장 실패: 전체 트랜잭션 rollback 후 Job 재시도
+
+### 9.6 재시도 정책
+
+최대 시도 횟수는 3회다.
+
+```typescript
+const nextRetryCount = (job.retryCount ?? 0) + 1;
+
+if (nextRetryCount < 3) {
+  // status = pending
+  // retry_count = nextRetryCount
+  // error = serialized error
+} else {
+  // status = failed
+  // retry_count = nextRetryCount
+  // project.status = draft
+}
+```
+
+재시도 전 기존에 저장된 부분 결과가 있으면 중복을 방지해야 한다.
+
+### 9.7 Stuck Job 복구
+
+Worker 시작 시 다음 조건의 Job을 `pending`으로 복구한다.
+
+```text
+status = processing
+AND updated_at < NOW() - STUCK_JOB_TIMEOUT
+```
+
+권장 기본값:
+
+```text
+STUCK_JOB_TIMEOUT = 10분
+```
+
+복구 시 `retry_count`를 증가시키고 복구 사유를 `error` 또는 로그에 기록한다.
+
+---
+
+## 10. LLM 프롬프트 요구사항
+
+시스템 프롬프트는 다음을 명시해야 한다.
+
+- 입력은 한국어 RFP 문서 일부다.
+- 청크에 포함된 모든 요구사항을 빠짐없이 추출한다.
+- 원문에 없는 ID를 생성하지 않는다.
+- ID가 없는 설명, 목차, 분류명은 요구사항으로 추출하지 않는다.
+- 동일 요구사항이 반복돼도 하나만 반환한다.
+- 결과는 지정된 JSON 스키마만 반환한다.
+- JSON 바깥의 설명과 Markdown 코드 블록을 금지한다.
+
+권장 추가 지시:
+
+```text
+청크에 요구사항이 10개 있으면 반드시 10개 모두 반환해야 한다.
+첫 몇 개만 요약하거나 대표 항목만 선택하지 마라.
+```
+
+프롬프트 변경은 테스트 PDF 3종에 대한 회귀 테스트 후 반영한다.
+
+---
+
+## 11. 유사 RFP 검색 명세
+
+### 11.1 현재 구현
+
+PostgreSQL Full-Text Search를 사용한다.
+
+```sql
+to_tsvector('simple', document_chunks.content)
+@@ plainto_tsquery('simple', :query)
+```
+
+점수는 `ts_rank()`를 사용하고 문서 단위로 집계한다.
+
+### 11.2 검색 제약
+
+- 동일 조직 문서만 검색한다.
+- 현재 프로젝트 문서는 제외한다.
+- `documents.type = 'rfp'`만 대상으로 한다.
+- 내용이 비어 있는 청크는 제외한다.
+- 반환 건수는 기본 5~10개로 제한한다.
+
+### 11.3 향후 벡터 검색
+
+`document_chunks.embedding vector(1536)` 컬럼은 예약되어 있다. 임베딩 API를 확보하면 다음 방식으로 전환하거나 혼합 검색을 적용한다.
+
+```text
+FTS score + vector cosine similarity + metadata filter
+```
+
+---
+
+## 12. 환경 설정
+
+### 12.1 `.env`
+
+```env
+DATABASE_URL="postgres://rfpuser:rfppass@localhost:5433/rfp-demo"
+
+LLM_API_BASE="https://opencode.ai/zen/go/v1"
+LLM_API_KEY="OPENCODE_API_KEY"
+LLM_MODEL="minimax-m2.7"
+```
+
+권장 추가 변수:
+
+```env
+WORKER_POLL_INTERVAL_MS="2000"
+LLM_TIMEOUT_MS="30000"
+LLM_MAX_TOKENS="4096"
+RFP_CHUNK_SIZE="3500"
+RFP_CHUNK_OVERLAP="300"
+RFP_MAX_EXCERPT_CHARS="20000"
+STUCK_JOB_TIMEOUT_MS="600000"
+MAX_JOB_RETRIES="3"
+UPLOAD_DIR="uploads"
+```
+
+### 12.2 환경변수 로딩
+
+- Next.js는 자체 `.env` 로딩을 사용한다.
+- `tsx scripts/worker.ts`는 `src/lib/env.ts`에서 `.env`를 명시적으로 로드한다.
+- ESM 환경에서 `__dirname`이 없을 수 있으므로 코드가 런타임별로 안전하게 동작해야 한다.
+- 필수 환경변수가 없으면 애플리케이션 시작 시 즉시 실패하도록 검증한다.
+
+### 12.3 Docker
+
+```yaml
+version: "3.8"
+services:
+  postgres:
+    image: pgvector/pgvector:pg16
+    container_name: rfp-demo-db
+    ports:
+      - "5433:5432"
+    environment:
+      POSTGRES_USER: rfpuser
+      POSTGRES_PASSWORD: rfppass
+      POSTGRES_DB: rfp-demo
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+      - ./scripts/init-db.sh:/docker-entrypoint-initdb.d/init-db.sh
+
+volumes:
+  pgdata:
+```
+
+필수 PostgreSQL 확장:
+
+```sql
+CREATE EXTENSION IF NOT EXISTS vector;
+CREATE EXTENSION IF NOT EXISTS pg_trgm;
+```
+
+---
+
+## 13. 실행 및 개발 절차
+
+### 13.1 초기 설정
+
+```bash
+pnpm install
+docker compose up -d
+pnpm db:push
+```
+
+### 13.2 개발 서버
+
+터미널 1:
+
+```bash
+pnpm dev
+```
+
+터미널 2:
+
+```bash
+pnpm worker
+```
+
+브라우저:
+
+```text
+http://localhost:3000
+```
+
+### 13.3 통합 실행
+
+```bash
+./scripts/start.sh
+```
+
+스크립트 책임:
+
+- 기존 Next.js/Worker 프로세스 정리
+- Next.js 백그라운드 실행
+- Worker 포그라운드 실행
+- 종료 시 자식 프로세스 정리
+- 로그를 `logs/`에 기록
+
+### 13.4 시드
+
+```bash
+./scripts/seed.sh
+```
+
+### 13.5 스키마 작업
+
+```bash
+pnpm db:push
+pnpm db:studio
+```
+
+---
+
+## 14. 품질 요구사항
+
+### 14.1 기능 품질
+
+- 사용자가 파일을 업로드하면 2초 이내에 Job이 DB에 생성되어야 한다.
+- Worker가 실행 중이면 평균 2초 이내에 pending Job을 가져와야 한다.
+- 분석 중 페이지 이탈 후 재진입해도 상태와 진행률을 복구해야 한다.
+- 요구사항 ID는 정규식 규칙을 통과한 값만 저장해야 한다.
+- 프로젝트 삭제 후 관련 레코드가 남지 않아야 한다.
+- DOCX 업로드를 허용한다면 Worker가 실제로 DOCX를 처리해야 한다.
+
+### 14.2 안정성
+
+- LLM 호출은 강제 timeout을 가져야 한다.
+- Job은 최대 3회 재시도한다.
+- Worker 강제 종료 후 stuck Job을 자동 복구해야 한다.
+- DB 저장은 트랜잭션을 사용한다.
+- 중복 Worker가 동일 Job을 처리하지 않아야 한다.
+
+### 14.3 관측 가능성
+
+Worker 로그에 최소 다음 정보가 포함되어야 한다.
+
+- Job ID, Project ID, Document ID
+- 파일명과 파일 형식
+- 파싱 문자 수
+- excerpt 시작 위치와 길이
+- 청크 수
+- 청크별 시작/완료/실패
+- LLM 응답 시간
+- 청크별 추출 개수
+- 필터링 전후 요구사항 개수
+- 총 처리 시간
+- 재시도 횟수와 최종 오류
+
+API 및 Worker 로그에 API 키, 전체 문서 원문, 개인정보를 노출하지 않는다.
+
+### 14.4 보안
+
+- 업로드 파일 확장자와 MIME 타입을 검증한다.
+- 업로드 경로 traversal을 방지한다.
+- 원본 파일명은 표시용으로만 사용하고 실제 저장명과 분리한다.
+- 최대 업로드 크기를 설정한다.
+- SQL은 매개변수화한다.
+- API 키는 서버/Worker에서만 사용한다.
+- 향후 인증 도입 시 모든 프로젝트 조회와 수정에 조직 범위 검증을 적용한다.
+
+---
+
+## 15. 테스트 명세
+
+### 15.1 단위 테스트
+
+#### 파서
+
+- PDF 텍스트 추출 성공
+- DOCX 텍스트 추출 성공
+- 지원하지 않는 확장자 거부
+- 빈 문서 처리
+- 텍스트 정제 결과 검증
+
+#### 청크 분할
+
+- 짧은 문서 1청크
+- 정확한 경계 길이
+- overlap 적용
+- 마지막 청크 누락 없음
+- 무한 루프 없음
+
+#### 요구사항 정규화
+
+- 유효 ID 통과
+- 잘못된 ID 제거
+- 소문자 ID uppercase 변환
+- 동일 ID 중복 제거
+- 더 완전한 중복 항목 선택
+- enum fallback 처리
+
+#### 사업기간 추출
+
+- `계약일로부터 150일`
+- `2026.01.01 ~ 2026.06.30`
+- 기간 없음
+- 정규식 실패 후 LLM fallback
+
+### 15.2 API 통합 테스트
+
+- PDF 업로드 성공
+- DOCX 업로드 성공
+- 잘못된 파일 형식 400
+- 파일 누락 400
+- 프로젝트 상세 조회
+- 분석 상태 조회
+- 프로젝트 삭제와 종속 데이터 정리
+- 존재하지 않는 프로젝트 404
+- 유사 문서 검색에서 현재 문서 제외
+
+### 15.3 Worker 통합 테스트
+
+- pending Job 정상 획득
+- 두 Worker에서 중복 획득 방지
+- LLM timeout 후 재시도
+- 3회 실패 후 failed 처리
+- 일부 청크 실패 후 나머지 저장
+- 모든 청크 실패 시 failed 처리
+- Worker 재시작 시 stuck Job 복구
+- DB 저장 중 오류 발생 시 rollback
+
+### 15.4 회귀 테스트 문서
+
+| 파일 | 예상 요구사항 수 |
+|---|---:|
+| `docs/rfp/한국기술대_전자결재_시스템고도화.pdf` | 39 |
+| `docs/rfp/한국폴리텍_전자결재시스템고도화.pdf` | 75 |
+| `docs/test/공고_제안요청서.pdf` | 59 |
+
+### 15.5 수용 기준
+
+#### MVP 수용 기준
+
+- PDF 업로드부터 매트릭스 표시까지 전체 흐름이 동작한다.
+- 분석이 HTTP 요청과 독립적으로 계속된다.
+- 진행률과 오류가 UI에 표시된다.
+- 유효한 요구사항 ID만 저장된다.
+- 프로젝트 삭제가 FK 오류 없이 완료된다.
+
+#### 운영 전 필수 기준
+
+- DOCX 실제 처리 지원
+- stuck Job 자동 복구
+- 모든 청크 실패 감지
+- 업로드 제한 및 보안 검증
+- 테스트 PDF 평균 추출 커버리지 90% 이상
+- 같은 입력에 대한 요구사항 수 변동 범위 ±5% 이내
+- 최소 3회 연속 통합 테스트 성공
+
+---
+
+## 16. 현재 알려진 문제
+
+### 16.1 요구사항 추출 커버리지 불안정
+
+현재 테스트 결과:
+
+| 모델 | 결과 | 특성 |
+|---|---:|---|
+| `deepseek-v4-flash` | 59/59 | 정확하지만 느림 |
+| `minimax-m2.7` | 17/59 | 빠르지만 누락이 많음 |
+
+근본 원인은 `minimax-m2.7`이 한 청크에 여러 요구사항이 있어도 일부만 반환하는 경향이다.
+
+우선 개선 순서:
+
+1. 프롬프트에 전체 추출 의무 강화
+2. `max_tokens`를 8192로 증가
+3. 청크 크기를 2500자로 축소
+4. 요구사항 ID를 정규식으로 먼저 탐색한 뒤 ID별 범위를 LLM에 전달
+5. 고품질 모델로 변경
+
+### 16.2 DOCX 처리 불일치
+
+업로드 API는 DOCX를 허용하지만 Worker가 PDF 파서만 사용하면 런타임 실패가 발생한다. 확장자별 파서 분기 구현 전에는 DOCX 허용을 제거하거나 명확히 비활성화해야 한다.
+
+### 16.3 사업기간 추출 간헐 실패
+
+LLM 호출 실패를 무시하므로 `period`가 비어 있을 수 있다. 정규식/키워드 fallback을 먼저 적용하고 LLM은 보조 수단으로 사용한다.
+
+### 16.4 모든 청크 실패 시 0건 성공 처리
+
+모든 청크 실패와 실제 요구사항 없음은 구분되어야 한다. 성공한 청크 수가 0이면 Job을 failed로 처리한다.
+
+### 16.5 Worker 중단 시 processing Job 고착
+
+stuck Job 복구 로직이 없으면 수동 SQL이 필요하다. Worker 시작 시 자동 복구를 구현한다.
+
+---
+
+## 17. 개선 우선순위
+
+| 우선순위 | 작업 | 완료 조건 |
+|---|---|---|
+| P0 | 추출 커버리지 개선 | 3개 테스트 PDF 평균 90% 이상 |
+| P0 | 모든 청크 실패 처리 | 0건 성공 오판 제거 |
+| P0 | stuck Job 복구 | Worker 재시작 후 자동 재처리 |
+| P1 | DOCX 파서 분기 | DOCX 통합 테스트 통과 |
+| P1 | 사업기간 fallback | 대표 기간 형식 테스트 통과 |
+| P1 | 업로드 보안 강화 | MIME, 크기, 경로 검증 |
+| P2 | 벡터 검색 | FTS 대비 검색 품질 비교 |
+| P2 | Worker pool | 다중 Job 병렬 처리 검증 |
+| P2 | 타입 정리 | 주요 API/컴포넌트의 `any` 제거 |
+
+---
+
+## 18. 권장 추출 개선안
+
+LLM이 요구사항을 누락하는 문제를 줄이기 위해 단순 고정 길이 청크보다 ID 기반 분할을 우선 검토한다.
+
+### 18.1 ID 기반 전처리
+
+1. 전체 텍스트에서 `/[A-Z]{2,4}-\d{3}/g`를 모두 찾는다.
+2. 각 ID 시작점부터 다음 ID 직전까지를 하나의 후보 블록으로 만든다.
+3. 지나치게 짧은 블록은 다음 블록과 결합한다.
+4. LLM에는 블록 단위로 구조화만 요청한다.
+5. 정규식으로 찾은 ID 개수와 LLM 결과 개수를 비교한다.
+
+### 18.2 커버리지 검증
+
+```text
+coverage = 저장된 유효 요구사항 ID 수 / 원문에서 탐지한 고유 ID 수
+```
+
+- coverage가 임계값보다 낮으면 재분석한다.
+- 권장 초기 임계값은 0.85다.
+- 재분석 시 더 작은 청크 또는 다른 모델을 사용한다.
+- 원문 ID 탐지가 불가능한 문서에서는 기존 map-reduce를 fallback으로 사용한다.
+
+이 방식은 모델이 여러 항목 중 일부만 선택하는 문제를 줄이고, 분석 결과 누락을 정량적으로 감지할 수 있다.
+
+---
+
+## 19. 운영 및 문제 해결
+
+### 19.1 Worker가 Job을 처리하지 않을 때
+
+```bash
+ps aux | grep worker
+```
+
+```sql
+SELECT *
+FROM jobs
+ORDER BY created_at DESC;
+```
+
+`pending`이 장시간 유지되면 Worker를 재시작한다.
+
+```bash
+pkill -f "scripts/worker.ts"
+pnpm worker
+```
+
+### 19.2 processing Job 수동 복구
+
+```sql
+UPDATE jobs
+SET status = 'pending',
+    updated_at = NOW()
+WHERE status = 'processing';
+```
+
+자동 복구 기능 구현 후에는 긴급 상황에서만 사용한다.
+
+### 19.3 분석 0건
+
+확인 순서:
+
+1. Worker 로그의 청크 실패 수
+2. 파싱된 전체 문자 수
+3. excerpt 시작 위치와 길이
+4. LLM 원본 응답 유무
+5. JSON 파싱 오류
+6. ID 필터링 전후 개수
+7. 모델과 timeout 설정
+
+### 19.4 DB 직접 접속
+
+```bash
+docker exec -it rfp-demo-db psql -U rfpuser -d rfp-demo
+```
+
+```text
+\dt
+\d jobs
+```
+
+```sql
+SELECT * FROM jobs ORDER BY created_at DESC LIMIT 5;
+```
+
+### 19.5 전체 데이터 초기화
+
+```bash
+docker exec rfp-demo-db psql -U rfpuser -d rfp-demo -c "
+  TRUNCATE organizations, projects, documents, document_chunks,
+            requirements, responses, citations, jobs, audit_logs CASCADE;
+"
+```
+
+---
+
+## 20. Git 전략
+
+```text
+main
+└── feat/worker-pattern
+```
+
+- `main`: 안정화 코드
+- `feat/worker-pattern`: Worker + map-reduce 분석 작업 브랜치
+
+### 20.1 병합 전 체크리스트
+
+- `pnpm install` 후 lockfile 일치
+- `pnpm db:push` 성공
+- Next.js build 성공
+- Worker 단독 실행 성공
+- PDF 통합 테스트 성공
+- DOCX 지원 여부와 UI 문구 일치
+- stuck Job 복구 테스트
+- 모든 청크 실패 테스트
+- 프로젝트 삭제 테스트
+- `.env`와 API 키가 Git에 포함되지 않음
+
+---
+
+## 21. Definition of Done
+
+기능 변경은 다음 조건을 모두 충족해야 완료로 간주한다.
+
+- 구현 코드와 타입이 일치한다.
+- 실패 경로와 재시도 동작이 정의되어 있다.
+- 관련 단위 또는 통합 테스트가 추가되었다.
+- Worker 로그로 문제 원인을 추적할 수 있다.
+- DB 변경 사항이 `src/db/schema.ts`와 Drizzle 산출물에 반영되었다.
+- API 응답 변경 시 프론트엔드 타입과 UI가 함께 수정되었다.
+- 프로젝트 재진입, Worker 재시작, 네트워크 일시 오류 시나리오를 확인했다.
+- 문서 또는 `rfp-pipeline-spec.md`가 최신 상태로 갱신되었다.
