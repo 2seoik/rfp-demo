@@ -31,8 +31,8 @@ pnpm db:push
 
 ### P2 — 추출 품질
 
-1. **LLM 모델 변경 검토**: `minimax-m2.7` → `gpt-4o-mini` 또는 다른 빠른 모델
-2. **`scoreCandidate` 점수 함수 튜닝**: 다양한 RFP 형식에 맞게 가중치 조정
+1. **LLM 모델 변경 검토**: `minimax-m2.7` → `gpt-4o-mini` 또는 다른 빠른 모델 (API 접근 불가로 보류)
+2. **`scoreCandidate` 점수 함수 튜닝**: 다양한 RFP 형식에 맞게 가중치 조정 ✅ 완료
 3. **2회차 재시도 로직 개선**: 재시도 프롬프트 정교화
 
 ### P3 — 검색 & 확장
