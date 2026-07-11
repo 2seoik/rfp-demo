@@ -682,6 +682,7 @@ async function main() {
   console.log(`   Polling interval: ${POLL_INTERVAL_MS / 1000}초`);
   console.log(`   PID: ${process.pid}`);
   console.log(`   다중 Worker 병렬 실행: 지원됨 (FOR UPDATE SKIP LOCKED)`);
+  console.log(`   임베딩: ${process.env.EMBEDDING_API_URL ? `✅ ${process.env.EMBEDDING_API_URL}` : "❌ 미설정"}`);
   console.log("=".repeat(50));
 
   // ── Stuck job 복구: 10분 이상 processing인 job → pending ──
