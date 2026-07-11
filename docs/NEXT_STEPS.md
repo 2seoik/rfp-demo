@@ -37,9 +37,9 @@ pnpm db:push
 
 ### P3 — 검색 & 확장
 
-1. **벡터 임베딩 API 확보**: `document_chunks.embedding` 컬럼 활용
-2. **Worker pool**: 다중 병렬 분석
-3. **자동화 테스트**: API, Worker, 파서, 청킹, 필터링
+1. **벡터 임베딩 API 확보**: `document_chunks.embedding` 컬럼 활용 (API 제한으로 보류)
+2. **Worker pool**: 다중 병렬 분석 ✅ 완료
+3. **자동화 테스트**: vitest 22 unit tests ✅ 완료
 
 ## 테스트 PDF
 
