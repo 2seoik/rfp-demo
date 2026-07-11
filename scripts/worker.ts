@@ -364,9 +364,17 @@ async function handleRfpAnalyze(job: any) {
     // ── 2차 재시도 (ID 불일치 또는 1차 실패) ────────────
     if (!blockSuccess && block.expectedId) {
       try {
-        const retryPrompt = `다음 텍스트는 RFP 문서에서 요구사항 ID "${block.expectedId}"에 해당하는 부분입니다.\n` +
-          `이 ID에 해당하는 요구사항의 name, sourceText, type, priority를 JSON으로 추출하세요.\n` +
-          `다른 ID를 생성하지 말고 반드시 "${block.expectedId}"를 id 필드에 사용하세요.`;
+        const retryPrompt = [
+          `RFP 문서 요구사항 ID "${block.expectedId}"에 해당하는 텍스트입니다.`,
+          `아래 JSON 형식으로 name, sourceText, type, priority를 추출하세요.`,
+          `반드시 id 필드에 "${block.expectedId}"를 그대로 사용하세요. 다른 ID를 생성하지 마세요.`,
+          ``,
+          `출력 예시:`,
+          `{"requirements":[{"id":"${block.expectedId}","name":"요구사항 명칭","sourceText":"상세 설명","type":"technical","priority":"essential"}]}`,
+          ``,
+          `type: technical | security | operation | qualification | format | general`,
+          `priority: essential | recommended | optional`,
+        ].join("\n");
         const retryRes = await callLLM(client, model, retryPrompt, block.text + "\n\nJSON:", 4096, 30000);
         const retryContent = retryRes.choices[0]?.message?.content || "";
         const retryReqs = parseLLMResponse(retryContent);
