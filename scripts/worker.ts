@@ -276,6 +276,8 @@ async function handleRfpAnalyze(job: any) {
     "반드시 유효한 JSON만 출력. 생각 과정 출력 금지.",
   ].join("\n");
 
+  let successfulBlocks = 0;
+
   for (let i = 0; i < blocks.length; i++) {
     const block = blocks[i];
     const chunkProgress = 40 + Math.round((i / blocks.length) * 35);
@@ -310,6 +312,7 @@ async function handleRfpAnalyze(job: any) {
 
       if (hasMatchingId) {
         blockSuccess = true;
+        successfulBlocks++;
         diag(jobId, `block_ok`, {
           block_index: i,
           expected_id: block.expectedId,
@@ -350,6 +353,7 @@ async function handleRfpAnalyze(job: any) {
 
         if (hasMatch && retryReqs.length > 0) {
           blockSuccess = true;
+          successfulBlocks++;
           diag(jobId, `block_retry_ok`, { block_index: i, expected_id: block.expectedId });
           log(jobId, `  블록 ${i + 1}/${blocks.length}: ✅ 재시도 성공`);
           allReqs.push(...retryReqs);
@@ -380,6 +384,14 @@ async function handleRfpAnalyze(job: any) {
     }
   }
 
+  // 모든 블록 실패 감지
+  if (blocks.length > 0 && successfulBlocks === 0) {
+    throw new Error(
+      `모든 분석 블록이 실패했습니다 (${blocks.length}개 블록 중 0개 성공). ` +
+      `LLM API 연결 또는 모델 상태를 확인하세요.`
+    );
+  }
+
   // 중복 제거 + 유효한 요구사항 ID만 필터링
   const deduped = deduplicateById(allReqs);
   const reqs = filterValidRequirementIds(deduped);
@@ -403,6 +415,8 @@ async function handleRfpAnalyze(job: any) {
     excerpt_ids_count: allExcerptIds.length,
     final_valid_ids: validReqIds.length,
     final_coverage_pct: finalCoverage,
+    success_blocks: successfulBlocks,
+    total_blocks: blocks.length,
     missing_in_excerpt: allExcerptIds.filter(id => !validReqIds.includes(id)).slice(0, 30),
     successful_blocks: blocks.length,
   });
