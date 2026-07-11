@@ -31,11 +31,11 @@ function sleep(ms: number) {
 }
 
 function log(jobId: string, msg: string) {
-  console.log(`[${new Date().toISOString().slice(11, 19)}][${jobId.slice(0, 8)}] ${msg}`);
+  console.log(`[${new Date().toISOString().slice(11, 19)}][w${workerId}][${jobId.slice(0, 8)}] ${msg}`);
 }
 
 function diag(jobId: string, label: string, data: Record<string, any>) {
-  console.log(`[${new Date().toISOString().slice(11, 19)}][${jobId.slice(0, 8)}][DIAG] ${label} ${JSON.stringify(data)}`);
+  console.log(`[${new Date().toISOString().slice(11, 19)}][w${workerId}][${jobId.slice(0, 8)}][DIAG] ${label} ${JSON.stringify(data)}`);
 }
 
 // ─── Job Progress Updater ──────────────────────────────────
@@ -596,6 +596,10 @@ async function poll() {
 // ─── Startup ────────────────────────────────────────────────
 
 const STUCK_JOB_TIMEOUT_MINUTES = 10;
+const POLL_INTERVAL_MS = parseInt(process.env.WORKER_POLL_INTERVAL_MS || "2000", 10);
+
+// Worker ID: 여러 Worker 동시 실행 시 로그 구분용
+const workerId = `${process.pid}`.slice(-4);
 
 async function recoverStuckJobs() {
   try {
@@ -625,10 +629,11 @@ async function recoverStuckJobs() {
 
 async function main() {
   console.log("=".repeat(50));
-  console.log("🧑‍🏭 RFP Worker 시작 (map-reduce 모드)");
+  console.log(`🧑‍🏭 RFP Worker #${workerId} 시작`);
   console.log(`   Model: ${process.env.LLM_MODEL || "minimax-m2.7"}`);
-  console.log(`   Polling interval: 2초`);
+  console.log(`   Polling interval: ${POLL_INTERVAL_MS / 1000}초`);
   console.log(`   PID: ${process.pid}`);
+  console.log(`   다중 Worker 병렬 실행: 지원됨 (FOR UPDATE SKIP LOCKED)`);
   console.log("=".repeat(50));
 
   // ── Stuck job 복구: 10분 이상 processing인 job → pending ──
@@ -636,7 +641,7 @@ async function main() {
 
   while (true) {
     await poll();
-    await sleep(2000);
+    await sleep(POLL_INTERVAL_MS);
   }
 }
 
