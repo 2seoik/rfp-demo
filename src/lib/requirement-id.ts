@@ -244,23 +244,24 @@ export interface CandidateScore {
 }
 
 export function scoreCandidate(block: RequirementBlock): CandidateScore {
-  const hasDetailMarker =
-    block.text.includes("세부내용") || block.text.includes("상세설명");
+  // 구조적 마커: RFP 요구사항 상세에 흔히 등장하는 패턴
+  const detailMarkers = ["세부내용", "상세설명", "정의", "[H/W]", "[S/W]", "○", "※"];
+  const hasDetailMarker = detailMarkers.some((m) => block.text.includes(m));
 
   let score = 0;
-  // 텍스트 길이 점수 (길수록 완성도 높음, 최대 40점)
-  score += Math.min(40, Math.floor(block.text.length / 50));
-  // 구조적 마커 포함 시 보너스 (30점)
-  if (hasDetailMarker) score += 30;
-  // ID와 "요구사항" 키워드가 같이 있으면 보너스 (20점)
+  // 텍스트 길이 점수 (길수록 완성도 높음, 최대 35점)
+  score += Math.min(35, Math.floor(block.text.length / 50));
+  // 구조적 마커 포함 시 보너스 (25점)
+  if (hasDetailMarker) score += 25;
+  // ID와 설명 텍스트가 같이 있으면 보너스 (25점)
   if (
     block.expectedId &&
-    block.text.includes("요구사항") &&
-    block.text.includes(block.expectedId)
+    block.text.includes(block.expectedId) &&
+    block.text.length > 200
   )
-    score += 20;
-  // 숫자 정보 포함 보너스 (10점)
-  if (/\d{4}|\d+개월|\d+일/.test(block.text)) score += 10;
+    score += 25;
+  // 숫자 정보 포함 보너스 (연도, 기간, 개수 등, 15점)
+  if (/\d{4}|\d+개월|\d+일|\d+년|\d+명|\d+대/.test(block.text)) score += 15;
 
   return {
     block,
@@ -297,7 +298,8 @@ export function selectBestCandidates(
       result.push(candidates[0]);
     } else {
       const scored = candidates.map(scoreCandidate);
-      scored.sort((a, b) => b.score - a.score);
+      // 점수순 정렬, 동점이면 긴 텍스트 우선
+      scored.sort((a, b) => b.score - a.score || b.length - a.length);
       result.push(scored[0].block);
     }
   }

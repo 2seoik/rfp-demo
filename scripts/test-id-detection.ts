@@ -169,6 +169,17 @@ const scored = scoreCandidate(detailBlock);
 assert(scored.score > 0, "detail block has positive score");
 assert(scored.hasDetailMarker, "has detail marker");
 
+// 새 마커 테스트: "정의", "[H/W]", "○", "※" 등
+const hwBlock = {
+  expectedId: "ECR-002",
+  startOffset: 0,
+  endOffset: 300,
+  text: "ECR-002 웹한글 기안기 서버 도입. 정의: [H/W] ○ 도입되는 모든 장비는 이중화... 2025년",
+};
+const hwScored = scoreCandidate(hwBlock);
+assert(hwScored.hasDetailMarker, "[H/W] + ○ detected as detail marker");
+assert(hwScored.score > scored.score, "H/W block with more content scores higher");
+
 const simpleBlock = {
   expectedId: "SFR-001",
   startOffset: 0,
