@@ -228,28 +228,41 @@ async function handleRfpAnalyze(job: any) {
   });
   const model = process.env.LLM_MODEL || "minimax-m2.7";
 
-  // 5. 사업정보 추출 (별도 호출, 짧은 입력)
+  // 5. 사업정보 추출 (정규식 우선 + LLM fallback)
   let projectInfo: any = {};
   await updateJob(jobId, { progress: 30, message: "사업정보 추출 중..." });
-  try {
-    const infoRes = await callLLM(
-      client,
-      model,
-      'RFP 문서에서 사업기간을 찾아 JSON으로 출력. {"period": "사업기간"}. 없으면 {"period": null}. JSON만 출력.',
-      headerText + "\n\nJSON:",
-      512,
-      30000
-    );
-    const infoContent = infoRes.choices[0]?.message?.content || "";
+
+  // ── 1차: 정규식/키워드 기반 추출 ────────────────────
+  const periodRegex = /(?:사업기간|수행기간|계약기간|과업기간|용역기간|사업\s*기간)[\s:：]*[^\n.]{3,60}/;
+  const periodMatch = headerText.match(periodRegex);
+  if (periodMatch) {
+    projectInfo.period = periodMatch[0].replace(/^(?:사업기간|수행기간|계약기간|과업기간|용역기간)\s*[:：]\s*/, "").trim();
+    log(jobId, `📅 사업기간(정규식): ${projectInfo.period}`);
+  }
+
+  // ── 2차: LLM fallback (정규식 실패 시) ──────────────
+  if (!projectInfo.period) {
     try {
-      projectInfo = JSON.parse(infoContent);
-    } catch {
-      const m2 = infoContent.match(/\{[\s\S]*\}/);
-      if (m2) try { projectInfo = JSON.parse(m2[0]); } catch {}
+      const infoRes = await callLLM(
+        client,
+        model,
+        'RFP 문서에서 사업기간을 찾아 JSON으로 출력. {"period": "사업기간"}. 없으면 {"period": null}. JSON만 출력.',
+        headerText + "\n\nJSON:",
+        512,
+        30000
+      );
+      const infoContent = infoRes.choices[0]?.message?.content || "";
+      try {
+        const parsed = JSON.parse(infoContent);
+        if (parsed?.period) projectInfo.period = parsed.period;
+      } catch {
+        const m2 = infoContent.match(/\{[\s\S]*\}/);
+        if (m2) try { const p = JSON.parse(m2[0]); if (p?.period) projectInfo.period = p.period; } catch {}
+      }
+      log(jobId, `📅 사업기간(LLM): ${projectInfo.period || "(없음)"}`);
+    } catch (e: any) {
+      log(jobId, `⚠️ 사업정보 추출 실패: ${e.message}`);
     }
-    log(jobId, `📅 사업기간: ${projectInfo?.period || "(없음)"}`);
-  } catch (e: any) {
-    log(jobId, `⚠️ 사업정보 추출 실패: ${e.message}`);
   }
 
   // 6. Map-Reduce: ID 경계 블록별 요구사항 추출
