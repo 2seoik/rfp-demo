@@ -2,6 +2,16 @@ import { db } from "../src/db";
 import { jobs, documents, requirements, responses } from "../src/db/schema";
 import { sql, eq } from "drizzle-orm";
 import { readFileSync } from "fs";
+import {
+  detectAllIds,
+  normalizeId,
+  isValidRequirementId,
+  getUniqueNormalizedIds,
+  getIdPrefixStats,
+  getExcerptCoverage,
+  createIdBoundaryBlocks,
+  selectBestCandidates,
+} from "../src/lib/requirement-id";
 
 // ─── Utils ─────────────────────────────────────────────────
 function cleanText(text: string): string {
@@ -21,6 +31,10 @@ function sleep(ms: number) {
 
 function log(jobId: string, msg: string) {
   console.log(`[${new Date().toISOString().slice(11, 19)}][${jobId.slice(0, 8)}] ${msg}`);
+}
+
+function diag(jobId: string, label: string, data: Record<string, any>) {
+  console.log(`[${new Date().toISOString().slice(11, 19)}][${jobId.slice(0, 8)}][DIAG] ${label} ${JSON.stringify(data)}`);
 }
 
 // ─── Job Progress Updater ──────────────────────────────────
@@ -89,12 +103,12 @@ function deduplicateById(reqs: any[]): any[] {
 }
 
 // ─── Filter to valid requirement IDs ──────────────────────
-// ECR-001, SFR-005, COR-002 등 [A-Z]{2,4}-\d{3} 패턴만 유지
+// ECR-001, SFR-005, COR-002 등 /^[A-Z]{2,4}-\d{3}$/ 패턴만 유지
+// normalizeId()로 대소문자 정규화 후 검증
 function filterValidRequirementIds(reqs: any[]): any[] {
-  const idRegex = /^[A-Z]{2,4}-\d{3}$/;
   return reqs.filter((r) => {
     const id = r.id || r.originalId || "";
-    return idRegex.test(id);
+    return isValidRequirementId(id);
   });
 }
 
@@ -124,6 +138,17 @@ async function handleRfpAnalyze(job: any) {
 
   log(jobId, `📄 PDF 파싱 완료: ${doc.name} (${text.length}자)`);
 
+  // ── DIAG: 전체 텍스트 계측 ────────────────────────────
+  const allDetectedIds = detectAllIds(text);
+  const allFullTextIds = getUniqueNormalizedIds(allDetectedIds);
+  diag(jobId, "full_text", {
+    total_length: text.length,
+    total_ids_detected: allDetectedIds.length,
+    total_unique_ids: allFullTextIds.length,
+    id_prefixes: getIdPrefixStats(allFullTextIds),
+    sample_ids: allFullTextIds.slice(0, 20),
+  });
+
   // 2. 문서 앞부분에서 사업정보 추출용 헤더
   await updateJob(jobId, { progress: 15, message: "사업정보 추출 중..." });
   const headerText = text.slice(0, Math.min(2000, text.length));
@@ -131,12 +156,12 @@ async function handleRfpAnalyze(job: any) {
   // 3. 요구사항 섹션 찾기
   await updateJob(jobId, { progress: 20, message: "요구사항 섹션 찾는 중..." });
 
-  const reqIdRegex = /[A-Z]{2,4}-\d{3}/g;
+  // detectAllIds로 전체 문서에서 ID 위치 검출
   let firstReqIdPos = -1;
-  let m;
-  while ((m = reqIdRegex.exec(text)) !== null) {
-    if (m.index > text.length * 0.08) {
-      firstReqIdPos = m.index;
+  const detectedPositions = detectAllIds(text);
+  for (const d of detectedPositions) {
+    if (d.position > text.length * 0.08) {
+      firstReqIdPos = d.position;
       break;
     }
   }
@@ -166,6 +191,23 @@ async function handleRfpAnalyze(job: any) {
 
   const excerpt = text.slice(excerptStart, Math.min(text.length, excerptStart + 20000));
   log(jobId, `📋 요구사항 섹션 추출 (${excerpt.length}자)`);
+
+  // ── DIAG: excerpt 커버리지 계측 ────────────────────────
+  const excerptEnd = Math.min(text.length, excerptStart + 20000);
+  const allExcerptIds = getUniqueNormalizedIds(detectAllIds(excerpt));
+  const coverage = getExcerptCoverage(allFullTextIds, allExcerptIds);
+  diag(jobId, "excerpt", {
+    start: excerptStart,
+    end: excerptEnd,
+    length: excerpt.length,
+    ids_in_excerpt: coverage.insideCount,
+    ids_outside_excerpt: coverage.outsideCount,
+    total_full_text_ids: coverage.totalCount,
+    outside_ids: coverage.outside.slice(0, 30),
+    coverage_pct: coverage.totalCount > 0
+      ? Math.round((coverage.insideCount / coverage.totalCount) * 100)
+      : 0,
+  });
 
   // 4. LLM 클라이언트 생성
   const OpenAI = (await import("openai")).default;
@@ -199,11 +241,28 @@ async function handleRfpAnalyze(job: any) {
     log(jobId, `⚠️ 사업정보 추출 실패: ${e.message}`);
   }
 
-  // 6. Map-Reduce: 청크별 요구사항 추출
+  // 6. Map-Reduce: ID 경계 블록별 요구사항 추출
   await updateJob(jobId, { progress: 40, message: "AI 요구사항 추출 중..." });
 
-  const chunks = splitIntoChunks(excerpt, 3500, 300);
-  log(jobId, `📦 청크 분할: ${chunks.length}개`);
+  // ID 경계 기반 블록 생성 + 중복 후보 중 최적 블록 선택
+  const idBlocks = createIdBoundaryBlocks(excerpt);
+  const blocks = selectBestCandidates(idBlocks);
+  log(jobId, `📦 ID 경계 블록: ${idBlocks.length}개 → 중복 제거 후 ${blocks.length}개`);
+
+  // ── DIAG: 블록별 예상 ID 계측 ──────────────────────────
+  const expectedIdsPerBlock: (string | null)[] = [];
+  for (let i = 0; i < blocks.length; i++) {
+    const blockIds = getUniqueNormalizedIds(detectAllIds(blocks[i].text));
+    expectedIdsPerBlock.push(blocks[i].expectedId);
+    diag(jobId, `block_expected`, {
+      block_index: i,
+      block_length: blocks[i].text.length,
+      expected_id: blocks[i].expectedId,
+      start_offset: blocks[i].startOffset,
+      detected_ids_in_block: blockIds.length,
+      detected_ids_list: blockIds.slice(0, 15),
+    });
+  }
 
   const allReqs: any[] = [];
   const sysPrompt = [
@@ -217,73 +276,204 @@ async function handleRfpAnalyze(job: any) {
     "반드시 유효한 JSON만 출력. 생각 과정 출력 금지.",
   ].join("\n");
 
-  for (let i = 0; i < chunks.length; i++) {
-    const chunkProgress = 40 + Math.round((i / chunks.length) * 35);
+  for (let i = 0; i < blocks.length; i++) {
+    const block = blocks[i];
+    const chunkProgress = 40 + Math.round((i / blocks.length) * 35);
     await updateJob(jobId, {
       progress: chunkProgress,
-      message: `AI 분석 중... (청크 ${i + 1}/${chunks.length})`,
+      message: `AI 분석 중... (블록 ${i + 1}/${blocks.length})`,
     });
 
+    let blockSuccess = false;
+    let blockReqs: any[] = [];
+
+    // ── 1차 LLM 호출 ────────────────────────────────────
     try {
-      const res = await callLLM(client, model, sysPrompt, chunks[i] + "\n\nJSON:", 4096, 30000);
+      const userContent = block.expectedId
+        ? `${block.text}\n\n---\n위 텍스트는 요구사항 ID \"${block.expectedId}\"에 해당합니다. JSON 출력:`
+        : block.text + "\n\nJSON:";
+      const res = await callLLM(client, model, sysPrompt, userContent, 4096, 30000);
       const content = res.choices[0]?.message?.content || "";
-      const chunkReqs = parseLLMResponse(content);
-      log(jobId, `  청크 ${i + 1}/${chunks.length}: ${chunkReqs.length}개 추출`);
-      allReqs.push(...chunkReqs);
+      blockReqs = parseLLMResponse(content);
+
+      // ID 검증: LLM이 반환한 id가 expectedId와 일치하는지 확인
+      const hasMatchingId = block.expectedId
+        ? blockReqs.some(
+            (r: any) => (r.id || r.originalId || "").toUpperCase() === block.expectedId
+          )
+        : blockReqs.length > 0;
+
+      const extractedIds = blockReqs.map((r: any) => r.id || r.originalId).filter(Boolean);
+      const expectedList = expectedIdsPerBlock[i] ? [expectedIdsPerBlock[i]].filter(Boolean) as string[] : [];
+      const missingIds = expectedList.filter(id => !extractedIds.includes(id));
+      const extraIds = extractedIds.filter((id: string) => !expectedList.includes(id));
+
+      if (hasMatchingId) {
+        blockSuccess = true;
+        diag(jobId, `block_ok`, {
+          block_index: i,
+          expected_id: block.expectedId,
+          response_length: content.length,
+          extracted_count: blockReqs.length,
+          has_match: true,
+        });
+        log(jobId, `  블록 ${i + 1}/${blocks.length}: ✅ ${blockReqs.length}개 추출`);
+        allReqs.push(...blockReqs);
+      } else {
+        diag(jobId, `block_mismatch`, {
+          block_index: i,
+          expected_id: block.expectedId,
+          response_length: content.length,
+          extracted_ids: extractedIds.slice(0, 10),
+          missing_ids: missingIds.slice(0, 15),
+          extra_ids: extraIds.slice(0, 10),
+        });
+        log(jobId, `  블록 ${i + 1}/${blocks.length}: ⚠️ ID 불일치 (재시도)`);
+      }
     } catch (e: any) {
-      log(jobId, `  청크 ${i + 1}/${chunks.length} 실패: ${e.message.slice(0, 60)}`);
+      log(jobId, `  블록 ${i + 1}/${blocks.length}: ❌ 1차 호출 실패: ${e.message.slice(0, 60)}`);
+    }
+
+    // ── 2차 재시도 (ID 불일치 또는 1차 실패) ────────────
+    if (!blockSuccess && block.expectedId) {
+      try {
+        const retryPrompt = `다음 텍스트는 RFP 문서에서 요구사항 ID "${block.expectedId}"에 해당하는 부분입니다.\n` +
+          `이 ID에 해당하는 요구사항의 name, sourceText, type, priority를 JSON으로 추출하세요.\n` +
+          `다른 ID를 생성하지 말고 반드시 "${block.expectedId}"를 id 필드에 사용하세요.`;
+        const retryRes = await callLLM(client, model, retryPrompt, block.text + "\n\nJSON:", 4096, 30000);
+        const retryContent = retryRes.choices[0]?.message?.content || "";
+        const retryReqs = parseLLMResponse(retryContent);
+
+        const hasMatch = retryReqs.some(
+          (r: any) => (r.id || r.originalId || "").toUpperCase() === block.expectedId
+        );
+
+        if (hasMatch && retryReqs.length > 0) {
+          blockSuccess = true;
+          diag(jobId, `block_retry_ok`, { block_index: i, expected_id: block.expectedId });
+          log(jobId, `  블록 ${i + 1}/${blocks.length}: ✅ 재시도 성공`);
+          allReqs.push(...retryReqs);
+        }
+      } catch (e: any) {
+        log(jobId, `  블록 ${i + 1}/${blocks.length}: ❌ 재시도 실패: ${e.message.slice(0, 60)}`);
+      }
+    }
+
+    // ── raw_only 보존: 모든 시도 실패 시 원문 보존 ──────
+    if (!blockSuccess && block.expectedId) {
+      diag(jobId, `block_raw_only`, {
+        block_index: i,
+        expected_id: block.expectedId,
+        block_length: block.text.length,
+      });
+      log(jobId, `  블록 ${i + 1}/${blocks.length}: 📄 raw_only 보존 (${block.expectedId})`);
+      // 원문을 보존한 raw_only 요구사항 추가
+      allReqs.push({
+        id: block.expectedId,
+        originalId: block.expectedId,
+        name: null,                     // LLM 추출 실패 — name 없음
+        sourceText: block.text.slice(0, 1000), // 원문 그대로 보존
+        type: "general",
+        priority: "essential",
+        _rawOnly: true,                 // 내부 마커 (DB 저장 시 name=null 유지)
+      });
     }
   }
 
   // 중복 제거 + 유효한 요구사항 ID만 필터링
   const deduped = deduplicateById(allReqs);
   const reqs = filterValidRequirementIds(deduped);
+
+  // ── DIAG: 최종 필터링 결과 계측 ────────────────────────
+  const rawOnlyCount = allReqs.filter((r: any) => r._rawOnly).length;
+  const filteredOutIds = deduped
+    .map((r: any) => r.id || r.originalId)
+    .filter((id: string) => id && !reqs.some((r: any) => (r.id || r.originalId) === id));
+  const validReqIds = reqs.map((r: any) => r.id || r.originalId).filter(Boolean);
+  const finalCoverage = allExcerptIds.length > 0
+    ? Math.round((validReqIds.length / allExcerptIds.length) * 100)
+    : 0;
+  diag(jobId, "pipeline_summary", {
+    raw_extracted: allReqs.length,
+    raw_only_count: rawOnlyCount,
+    after_dedup: deduped.length,
+    after_filter: reqs.length,
+    filtered_out_count: filteredOutIds.length,
+    filtered_out_sample: filteredOutIds.slice(0, 20),
+    excerpt_ids_count: allExcerptIds.length,
+    final_valid_ids: validReqIds.length,
+    final_coverage_pct: finalCoverage,
+    missing_in_excerpt: allExcerptIds.filter(id => !validReqIds.includes(id)).slice(0, 30),
+    successful_blocks: blocks.length,
+  });
   log(jobId, `📋 총 ${allReqs.length}개 → 중복 제거 ${deduped.length}개 → ID 필터링 후 ${reqs.length}개`);
 
-  // 7. DB 저장
+  // 7. DB 저장 (트랜잭션)
   await updateJob(jobId, { progress: 80, message: `요구사항 ${reqs.length}개 저장 중...` });
 
-  // 사업기간 저장
-  if (projectInfo?.period) {
-    const periodVal = String(projectInfo.period).slice(0, 200);
-    await db.execute(sql`UPDATE projects SET period = ${periodVal} WHERE id = ${projectId}::uuid`);
-    log(jobId, `📅 사업기간 저장: ${periodVal}`);
-  }
-
-  for (let i = 0; i < reqs.length; i++) {
-    const r = reqs[i];
-    const [req] = await db.insert(requirements).values({
-      projectId: projectId,
-      originalId: r.id || r.originalId || null,
-      name: r.name ? String(r.name).slice(0, 200) : null,
-      sourceText: (r.sourceText || "").slice(0, 1000),
-      type: r.type || "technical",
-      priority: r.priority || "essential",
-      status: "pending",
-      order: i + 1,
-    }).returning();
-    await db.insert(responses).values({ requirementId: req.id, confidenceLabel: "insufficient" });
-
-    if (i % Math.max(1, Math.floor(reqs.length / 5)) === 0) {
-      const p = 80 + Math.round((i / reqs.length) * 15);
-      await updateJob(jobId, { progress: p, message: `요구사항 ${i + 1}/${reqs.length} 저장 중...` });
+  let savedCount = 0;
+  await db.transaction(async (tx) => {
+    // 사업기간 저장
+    if (projectInfo?.period) {
+      const periodVal = String(projectInfo.period).slice(0, 200);
+      await tx.execute(sql`UPDATE projects SET period = ${periodVal} WHERE id = ${projectId}::uuid`);
+      log(jobId, `📅 사업기간 저장: ${periodVal}`);
     }
-  }
 
-  // 8. 완료 처리
-  await db.execute(sql`UPDATE documents SET parsed_status = 'ready' WHERE id = ${documentId}::uuid`);
-  await db.execute(sql`
-    UPDATE projects SET status = ${reqs.length > 0 ? "review" : "draft"} WHERE id = ${projectId}::uuid
-  `);
+    for (let i = 0; i < reqs.length; i++) {
+      const r = reqs[i];
+      const originalId = r.id || r.originalId || null;
+
+      // 중복 방지: 동일 프로젝트 내 동일 original_id 존재 여부 확인
+      if (originalId) {
+        const [existing] = (await tx.execute(sql`
+          SELECT 1 FROM requirements
+          WHERE project_id = ${projectId}::uuid AND original_id = ${originalId}
+          LIMIT 1
+        `)).rows ?? [];
+        if (existing) {
+          log(jobId, `  ⏭️ ${originalId} 건너뜀 (이미 저장됨)`);
+          continue;
+        }
+      }
+
+      const [req] = await tx.insert(requirements).values({
+        projectId: projectId,
+        originalId,
+        name: r.name ? String(r.name).slice(0, 200) : null,
+        sourceText: (r.sourceText || "").slice(0, 1000),
+        type: r.type || "technical",
+        priority: r.priority || "essential",
+        status: "pending",
+        order: i + 1,
+      }).returning();
+      await tx.insert(responses).values({ requirementId: req.id, confidenceLabel: "insufficient" });
+
+      savedCount++;
+
+      if (i % Math.max(1, Math.floor(reqs.length / 5)) === 0) {
+        const p = 80 + Math.round((i / reqs.length) * 15);
+        await updateJob(jobId, { progress: p, message: `요구사항 ${i + 1}/${reqs.length} 저장 중...` });
+      }
+    }
+
+    // 완료 처리
+    await tx.execute(sql`UPDATE documents SET parsed_status = 'ready' WHERE id = ${documentId}::uuid`);
+    await tx.execute(sql`
+      UPDATE projects SET status = ${savedCount > 0 ? "review" : "draft"} WHERE id = ${projectId}::uuid
+    `);
+  });
+
+  log(jobId, `💾 저장 완료: ${savedCount}개 (${reqs.length - savedCount}개 중복 건너뜀)`);
 
   await updateJob(jobId, {
     status: "completed",
     progress: 100,
-    message: `✅ 분석 완료! ${reqs.length}개 요구사항 추출`,
-    result: JSON.stringify({ requirementCount: reqs.length }),
+    message: `✅ 분석 완료! ${savedCount}개 요구사항 추출`,
+    result: JSON.stringify({ requirementCount: savedCount }),
   });
 
-  log(jobId, `✅ RFP 분석 완료: ${doc.name} (${reqs.length}개 요구사항)`);
+  log(jobId, `✅ RFP 분석 완료: ${doc.name} (${savedCount}개 요구사항)`);
 }
 
 // ─── Main Polling Loop ─────────────────────────────────────

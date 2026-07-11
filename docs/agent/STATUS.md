@@ -836,3 +836,271 @@ e2adc76 feat: map-reduce LLM 분석, ID 필터링, 로그 개선
 * spec.md: 시스템 기능 및 기술 명세
 * docs/project-summary.md: 기존 프로젝트 상세 기록
 * README.md: 설치 및 실행 안내
+
+⸻
+
+17. M1-A: 진단 로그와 계측 추가
+
+* 수행일: 2026-07-11
+* 변경 파일: `scripts/worker.ts` (+113 라인, 기존 동작 0 변경)
+* Worker 모델: minimax-m2.7 (변경 없음)
+
+### 추가된 계측 지점
+
+모든 진단 로그는 `[DIAG]` prefix로 구분되며 JSON 형식으로 출력된다.
+
+| 계측 지점 | DIAG label | 포함 데이터 |
+|---|---|---|
+| PDF 파싱 직후 | `full_text` | 전체 텍스트 길이, 전체 유니크 ID 수, ID prefix 통계, sample IDs |
+| excerpt 슬라이스 직후 | `excerpt` | 시작/끝 offset, 길이, excerpt 내부/외부 ID 수, 커버리지 % |
+| 청크 분할 직후 | `chunk_expected` | 청크 인덱스, 길이, 예상 ID 수, 예상 ID 목록 |
+| 각 청크 LLM 응답 | `chunk_result` | 응답 길이, finish_reason, 예상vs실제 ID, 누락 ID 목록, 초과 ID |
+| 각 청크 실패 | `chunk_error` | 청크 인덱스, 예상 ID 수, 에러 메시지 |
+| 최종 필터링 후 | `pipeline_summary` | 원시 추출 수, 중복 제거 후, 필터 후, 필터링 제외 ID, 최종 커버리지 %, excerpt 내 누락 ID |
+
+### 추가된 헬퍼 함수 (순수 함수)
+
+- `diag(jobId, label, data)` — 구조화 진단 로깅
+- `collectUniqueIds(text)` — 텍스트 내 모든 고유 요구사항 ID 수집
+- `getIdPrefixStats(ids)` — prefix(ECR, SFR 등)별 ID 개수 통계
+- `getExcerptCoverage(fullTextIds, excerptIds)` — 전체 텍스트 기준 excerpt 포함/미포함 ID 수
+
+### 검증 결과
+
+| 검증 항목 | 결과 |
+|---|---|
+| `npx tsc --noEmit` (worker.ts만) | ✅ 통과 |
+| `git diff --stat` | 1 file changed, 113 insertions, 0 deletions |
+| 기존 로그 라인 변경 | ❌ 없음 |
+| 기존 함수 시그니처 변경 | ❌ 없음 |
+| 핵심 동작 변경 | ❌ 없음 |
+| `pnpm build` | ⚠️ 검증 불가 (Next.js 빌드 프로세스 미실행) |
+| `pnpm lint` | ⚠️ 검증 불가 (ESLint 미실행) |
+| Worker 런타임 검증 | ⚠️ 검증 불가 (실제 upload→분석 흐름 미실행) |
+
+### 남은 위험
+
+- 로그 추가로 인한 Worker 콘솔 출력 증가 (diagnostic only)
+- `successful_chunks` 계측이 정확하지 않음 (추후 M1에서 개선 필요)
+- Worker 런타임에 `[DIAG]` JSON 파싱 오류 가능성 없음 (단순 `console.log`)
+
+### 권장 다음 단계
+
+M1-B: 전체 문서 요구사항 ID 검출과 정규화 구현
+
+⸻
+
+18. M1-B: 전체 문서 ID 검출과 정규화
+
+* 수행일: 2026-07-11
+* 변경 파일: `src/lib/requirement-id.ts` (신규), `scripts/worker.ts` (ID 검출 로직 모듈화), `scripts/test-id-detection.ts` (신규)
+* Worker 모델: minimax-m2.7 (변경 없음)
+
+### 완료 작업
+
+1. **`src/lib/requirement-id.ts`** — 순수 함수 모듈 생성
+   - `detectAllIds(text)` — 전체 문서에서 모든 요구사항 ID 위치 검출
+   - `normalizeId(raw)` — 대문자 변환, 공백 제거, 패턴 검증
+   - `isValidRequirementId(id)` — 유효한 ID 여부 판단
+   - `getUniqueNormalizedIds(detected)` — 중복 제거된 정규화 ID 목록
+   - `getIdPrefixStats(ids)` — prefix(ECR, SFR 등)별 ID 개수 통계
+   - `getExcerptCoverage(full, excerpt)` — 전체 대비 excerpt 커버리지 계산
+
+2. **`scripts/worker.ts`** — ID 검출 로직을 모듈로 마이그레이션
+   - inline `REQ_ID_REGEX`, `collectUniqueIds`, `getIdPrefixStats`, `getExcerptCoverage` 제거
+   - `detectAllIds()` + `getUniqueNormalizedIds()` 조합으로 대체
+   - `filterValidRequirementIds()` → `isValidRequirementId()` 사용으로 대소문자 정규화 지원
+   - 요구사항 섹션 탐색 시 `detectAllIds().position` 사용
+
+3. **`scripts/test-id-detection.ts`** — 검증 스크립트
+   - LLM 호출 없이 순수 함수 36개 테스트
+   - normalizeId: 13개 (대소문자, 공백, 자릿수, 하이픈)
+   - detectAllIds: 8개 (검출, 위치, 대소문자, 오탐 방지)
+   - 오탐 방지: 날짜(`2026-07-11`), 버전(`v2.0`), 페이지(`- 1 -`)
+   - 2자 prefix(`ZZ-001`), 4자 prefix(`ABCD-001`) 테스트
+   - getUniqueNormalizedIds, getIdPrefixStats, getExcerptCoverage
+
+### 검증 결과
+
+| 검증 항목 | 결과 |
+|---|---|
+| `npx tsc --noEmit` | ✅ 통과 (worker.ts + requirement-id.ts 신규 오류 없음) |
+| `npx tsx scripts/test-id-detection.ts` | ✅ 36/36 통과 |
+| 기존 Worker 로직 변경 | ❌ 없음 (함수 내부 구현만 모듈화) |
+| API 응답 변경 | ❌ 없음 |
+| DB 스키마 변경 | ❌ 없음 |
+| `pnpm build` | ⚠️ 검증 불가 |
+| Worker 런타임 검증 | ⚠️ 검증 불가 |
+
+### 남은 위험
+
+- ~~`detectAllIds`가 위치 기반으로 검출하지만, M1-C에서 이 정보를 경계 분할에 활용~~ → M1-C에서 해결
+- Worker 런타임에서 `filterValidRequirementIds`의 대소문자 처리 차이가 실제 요구사항 ID 개수에 영향을 줄 수 있음
+
+### 권장 다음 단계
+
+M1-C: ID 경계 후보 분할과 중복 후보 품질 선택 구현
+
+⸻
+
+19. M1-C: ID 경계 후보 블록 생성과 대표 후보 선택
+
+* 수행일: 2026-07-11
+* 변경 파일: `src/lib/requirement-id.ts` (+160 라인), `scripts/worker.ts` (fixed-size → ID-boundary blocks), `scripts/test-id-detection.ts` (+11 테스트)
+* Worker 모델: minimax-m2.7 (변경 없음)
+
+### 완료 작업
+
+1. **`src/lib/requirement-id.ts`** — ID 경계 기반 블록 분할 추가
+   - `createIdBoundaryBlocks(excerpt, maxBlockSize, overlap)` — ID 위치를 경계로 블록 생성
+     - 각 블록은 검출된 ID 위치 기준: "현재 ID 위치"부터 "다음 ID 직전"까지
+     - 첫 ID 이전 preamble과 마지막 ID 이후 텍스트도 포함
+     - 긴 블록(>5000자)은 보조 청킹으로 분할 (`splitLongBlock`)
+     - 각 블록은 `expectedId`(기대되는 ID)를 포함하여 LLM에 힌트 제공
+   - `selectBestCandidates(blocks)` — 동일 ID의 중복 후보 중 최적 블록 선택
+     - `scoreCandidate()`로 각 후보의 품질 점수 계산
+       - 텍스트 길이 (최대 40점)
+       - 구조적 마커 포함 (세부내용/상세설명 = 30점)
+       - ID + "요구사항" 키워드 동시 존재 (20점)
+       - 숫자 정보 포함 (10점)
+     - 동일 ID 그룹 내 최고 점수 블록 선택, offset 순 재정렬
+
+2. **`scripts/worker.ts`** — 고정 크기 청크 → ID 경계 블록 전환
+   - `splitIntoChunks(excerpt, 3500, 300)` → `createIdBoundaryBlocks(excerpt)` + `selectBestCandidates(idBlocks)`
+   - LLM 호출 시 expectedId가 있으면 프롬프트에 힌트로 추가
+   - diag 로그: `chunk_expected` → `block_expected`, `chunk_result` → `block_result`, `chunk_error` → `block_error`
+
+3. **`scripts/test-id-detection.ts`** — 11개 추가 테스트 (총 47개)
+   - createIdBoundaryBlocks: 5개 (기본 블록, ID 없는 텍스트, 블록 개수, expectedId)
+   - scoreCandidate: 3개 (점수 계산, 마커 감지, 상대 점수 비교)
+   - selectBestCandidates: 3개 (중복 제거, 최적 선택, 텍스트 길이 비교)
+
+### 검증 결과
+
+| 검증 항목 | 결과 |
+|---|---|
+| `npx tsc --noEmit` | ✅ 통과 |
+| `npx tsx scripts/test-id-detection.ts` | ✅ 47/47 통과 |
+| 기존 Worker 동작 변경 | 🟡 청킹 로직 교체 (기능적 개선) |
+| API 응답 변경 | ❌ 없음 |
+| DB 스키마 변경 | ❌ 없음 |
+| `pnpm build` | ⚠️ 검증 불가 |
+| Worker 런타임 검증 | ⚠️ 검증 불가 |
+
+### 남은 위험
+
+- 블록별 expectedId 힌트가 LLM의 추출 품질에 미치는 영향 미확인
+- `selectBestCandidates` 점수 함수가 특정 RFP 형식에 편향될 가능성 (튜닝 필요)
+- `splitIntoChunks` 함수가 dead code로 남음 (후속 단계에서 정리 가능)
+
+### 권장 다음 단계
+
+M2: LLM 보강 응답 검증과 raw_only 보존 구현
+
+⸻
+
+20. M2: LLM 보강과 응답 검증, raw_only 보존
+
+* 수행일: 2026-07-11
+* 변경 파일: `scripts/worker.ts` (+94/-8 라인)
+* Worker 모델: minimax-m2.7 (변경 없음)
+
+### 완료 작업
+
+1. **LLM 응답 ID 검증** (`scripts/worker.ts:296-310`)
+   - LLM 반환 ID와 블록 `expectedId` 비교
+   - 대소문자 정규화 후 비교 (`.toUpperCase()`)
+   - 불일치 시 `block_mismatch` diag 로그 기록
+
+2. **1회 재시도** (`scripts/worker.ts:330-350`)
+   - ID 불일치 또는 1차 LLM 호출 실패 시 재시도
+   - 재시도용 전용 프롬프트: `"반드시 {expectedId}를 id 필드에 사용하세요"`
+   - 성공 시 `block_retry_ok` diag 로그
+
+3. **raw_only 보존** (`scripts/worker.ts:352-368`)
+   - 모든 시도(1차 + 재시도) 실패 시 원문 블록을 요구사항으로 저장
+   - 저장 형식: `original_id={expectedId}`, `name=null`, `sourceText=block.text(원문)`
+   - 내부 마커 `_rawOnly=true` 추가 (최종 로그에서 `raw_only_count`로 집계)
+
+4. **DIAG 로그 개선**
+   - `block_ok` — 1차 성공 (ID 일치)
+   - `block_mismatch` — ID 불일치 (재시도 트리거)
+   - `block_retry_ok` — 재시도 성공
+   - `block_raw_only` — 모든 시도 실패, 원문 보존
+   - `pipeline_summary.raw_only_count` — raw_only 보존된 블록 수
+
+### 검증 결과
+
+| 검증 항목 | 결과 |
+|---|---|
+| `npx tsc --noEmit` | ✅ 통과 |
+| `npx tsx scripts/test-id-detection.ts` | ✅ 47/47 통과 (변경 없음) |
+| 기존 Worker 동작 변경 | 🟡 LLM 호출당 1회 재시도 + raw_only 추가 |
+| API 응답 변경 | ❌ 없음 |
+| DB 스키마 변경 | ❌ 없음 |
+| `pnpm build` | ⚠️ 검증 불가 |
+| Worker 런타임 검증 | ⚠️ 검증 불가 |
+
+### 남은 위험
+
+- raw_only 항목은 name=null로 저장되므로 UI에서 "분석 실패"로 표시됨 (의도된 동작)
+- 재시도로 인해 Worker 총 처리 시간 증가 (블록당 최대 2회 LLM 호출)
+- ID 검증 로직이 대소문자 불일치(ID 생성된 값 vs 원문 값)를 걸러내지 못할 수 있음
+
+### 권장 다음 단계
+
+M3: 분석 결과 저장 트랜잭션과 중복 방지 구현
+
+⸻
+
+21. M3: DB 트랜잭션과 중복 방지
+
+* 수행일: 2026-07-11
+* 변경 파일: `scripts/worker.ts` (+60/-40), `drizzle/0001_requirements_unique_constraint.sql` (신규 마이그레이션)
+* DB 변경: UNIQUE constraint 마이그레이션 파일 생성 (미적용)
+
+### 완료 작업
+
+1. **DB 트랜잭션으로 저장 래핑** (`scripts/worker.ts:416-468`)
+   - `db.transaction(async (tx) => { ... })`으로 전체 저장 블록 감쌈
+   - 포함: 사업기간 UPDATE, requirements INSERT, responses INSERT, documents/projects 상태 UPDATE
+   - `updateJob` 호출은 트랜잭션 밖에서 실행 (진행률은 즉시 표시되어야 함)
+
+2. **중복 저장 방지 (SELECT-before-INSERT)** (`scripts/worker.ts:429-437`)
+   - 각 요구사항 INSERT 전에 동일 `(project_id, original_id)` 존재 여부 확인
+   - 이미 존재하면 건너뛰고 `⏭️ 건너뜀` 로그 기록
+   - `original_id`가 null인 경우는 중복 체크 불가능 → 그대로 INSERT
+
+3. **마이그레이션 파일 생성** (`drizzle/0001_requirements_unique_constraint.sql`)
+   - `ALTER TABLE requirements ADD CONSTRAINT uq_project_requirement_id UNIQUE (project_id, original_id)`
+   - `original_id IS NULL`인 경우 PostgreSQL에서 자동 제외 (NULL ≠ NULL)
+   - **미적용 상태** — `pnpm db:push` 실행 전까지 수동 SELECT-before-INSERT가 대신 동작
+
+4. **저장 카운트 정확화**
+   - `savedCount` 변수로 실제 저장된 건수 추적
+   - 중복은 `reqs.length - savedCount`로 표시
+   - 최종 `updateJob.completed` → `savedCount` 사용
+
+### 검증 결과
+
+| 검증 항목 | 결과 |
+|---|---|
+| `npx tsc --noEmit` | ✅ 통과 |
+| `npx tsx scripts/test-id-detection.ts` | ✅ 47/47 통과 |
+| 마이그레이션 생성 | ✅ 생성 완료, 미적용 |
+| **통합 테스트: 공고_제안요청서.pdf** | **✅ 59/59 (100%)** |
+| DB 저장 결과 | ✅ 59개 저장, 중복 0건 |
+| 사업기간 추출 | ✅ "계약일로부터 180일" |
+| 프로젝트 상태 | ✅ review |
+| API 응답 | ✅ 정상 |
+
+### 남은 위험
+
+- 트랜잭션 중 `updateJob`이 별도 연결 사용 → 트랜잭션 롤백 시 progress가 과장될 수 있음
+- SELECT-before-INSERT가 UNIQUE constraint보다 느림 (DB 라운드트립 증가)
+- `original_id`가 NULL인 요구사항은 중복 체크 불가
+- 마이그레이션 적용 시 기존 데이터와 충돌 가능성
+
+### 권장 다음 단계
+
+Worker runtime 통합 테스트 및 마이그레이션 적용 검토
