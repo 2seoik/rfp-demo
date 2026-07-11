@@ -11,18 +11,20 @@
     "db:migrate": "drizzle-kit migrate",
     "db:push": "drizzle-kit push",
     "db:studio": "drizzle-kit studio",
-    "worker": "tsx watch scripts/worker.ts"
+    "worker": "tsx watch scripts/worker.ts",
+    "test": "vitest run",
+    "test:watch": "vitest"
   },
   "keywords": [],
   "author": "",
   "license": "ISC",
   "dependencies": {
-    "pg": "^8.13.0",
     "drizzle-orm": "^0.45.2",
     "mammoth": "^1.12.0",
     "next": "^16.2.10",
     "openai": "^6.45.0",
     "pdf-parse": "^2.4.5",
+    "pg": "^8.13.0",
     "pgvector": "^0.3.0",
     "react": "^19.2.7",
     "react-dom": "^19.2.7",
@@ -39,6 +41,7 @@
     "eslint": "^10.6.0",
     "tailwindcss": "^4.3.2",
     "tsx": "^4.23.0",
-    "typescript": "^7.0.2"
+    "typescript": "^7.0.2",
+    "vitest": "^4.1.10"
   }
 }
