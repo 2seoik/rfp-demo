@@ -114,6 +114,45 @@ function filterValidRequirementIds(reqs: any[]): any[] {
 }
 
 // ─── Job Handler ───────────────────────────────────────────
+
+/**
+ * document_chunks 생성 + bge-m3 임베딩 (EMBEDDING_API_URL 설정 시)
+ * ※ vector dimension: bge-m3는 1024차원 → ALTER COLUMN 필요
+ */
+async function generateChunksWithEmbeddings(
+  excerpt: string,
+  documentId: string,
+  jobId: string
+) {
+  const chunkSize = 500;
+  const overlap = 100;
+  const texts: string[] = [];
+  for (let i = 0; i < excerpt.length; i += chunkSize - overlap) {
+    const t = excerpt.slice(i, i + chunkSize).trim();
+    if (t.length > 50) texts.push(t);
+    if (i + chunkSize >= excerpt.length) break;
+  }
+
+  log(jobId, `🔮 임베딩 생성: ${texts.length}개 청크`);
+
+  const response = await fetch(process.env.EMBEDDING_API_URL!, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ texts }),
+  });
+  if (!response.ok) throw new Error(`Embedding API: ${response.status}`);
+
+  const { embeddings } = (await response.json()) as { embeddings: number[][] };
+
+  for (let i = 0; i < texts.length; i++) {
+    await db.execute(sql`
+      INSERT INTO document_chunks (document_id, content, embedding, page, section)
+      VALUES (${documentId}::uuid, ${texts[i]}, ${JSON.stringify(embeddings[i])}::vector, ${Math.floor(i / 10) + 1}, 'general')
+    `);
+  }
+  log(jobId, `✅ 임베딩 생성 완료: ${texts.length}개 청크`);
+}
+
 async function handleRfpAnalyze(job: any) {
   const { id: jobId, projectId, documentId } = job;
   if (!projectId || !documentId) throw new Error("projectId/documentId 누락");
@@ -511,6 +550,15 @@ async function handleRfpAnalyze(job: any) {
   });
 
   log(jobId, `💾 저장 완료: ${savedCount}개 (${reqs.length - savedCount}개 중복 건너뜀)`);
+
+  // ── document_chunks + 임베딩 생성 (EMBEDDING_API_URL 설정 시) ──
+  if (process.env.EMBEDDING_API_URL) {
+    try {
+      await generateChunksWithEmbeddings(excerpt, documentId, jobId);
+    } catch (e: any) {
+      log(jobId, `⚠️ 임베딩 생성 실패 (분석 결과는 저장됨): ${e.message.slice(0, 60)}`);
+    }
+  }
 
   await updateJob(jobId, {
     status: "completed",
