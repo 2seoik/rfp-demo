@@ -2,6 +2,7 @@ import { db } from "../src/db";
 import { jobs, documents, requirements, responses } from "../src/db/schema";
 import { sql, eq } from "drizzle-orm";
 import { readFileSync } from "fs";
+import path from "path";
 import {
   detectAllIds,
   normalizeId,
@@ -130,13 +131,23 @@ async function handleRfpAnalyze(job: any) {
 
   await db.execute(sql`UPDATE documents SET parsed_status = 'parsing' WHERE id = ${documentId}::uuid`);
 
-  const { PDFParse } = await import("pdf-parse");
-  const parser = new PDFParse({ data: readFileSync(doc.file_url) });
-  const result = await parser.getText();
-  await parser.destroy();
-  const text = cleanText(result.text);
+  // 문서 파싱 (PDF 또는 DOCX)
+  const fileExt = path.extname(doc.file_url).toLowerCase();
+  let text: string;
 
-  log(jobId, `📄 PDF 파싱 완료: ${doc.name} (${text.length}자)`);
+  if (fileExt === ".docx") {
+    const mammoth = await import("mammoth");
+    const result = await mammoth.extractRawText({ path: doc.file_url });
+    text = cleanText(result.value);
+    log(jobId, `📄 DOCX 파싱 완료: ${doc.name} (${text.length}자)`);
+  } else {
+    const { PDFParse } = await import("pdf-parse");
+    const parser = new PDFParse({ data: readFileSync(doc.file_url) });
+    const result = await parser.getText();
+    await parser.destroy();
+    text = cleanText(result.text);
+    log(jobId, `📄 PDF 파싱 완료: ${doc.name} (${text.length}자)`);
+  }
 
   // ── DIAG: 전체 텍스트 계측 ────────────────────────────
   const allDetectedIds = detectAllIds(text);
