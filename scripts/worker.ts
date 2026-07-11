@@ -548,6 +548,35 @@ async function poll() {
 }
 
 // ─── Startup ────────────────────────────────────────────────
+
+const STUCK_JOB_TIMEOUT_MINUTES = 10;
+
+async function recoverStuckJobs() {
+  try {
+    const result = (await db.execute(sql`
+      UPDATE jobs
+      SET status = 'pending',
+          retry_count = retry_count + 1,
+          message = 'Worker 재시작: stuck job 복구',
+          updated_at = NOW()
+      WHERE status = 'processing'
+        AND updated_at < NOW() - INTERVAL '${sql.raw(String(STUCK_JOB_TIMEOUT_MINUTES))} minutes'
+      RETURNING id, project_id, document_id, retry_count
+    `)).rows ?? [];
+
+    if (result.length > 0) {
+      console.log(`[WORKER] ♻️ ${result.length}개 stuck job 복구:`);
+      for (const r of result as any[]) {
+        console.log(`  - ${r.id.slice(0, 8)} (project=${(r.project_id || '').slice(0, 8)}, retry=${r.retry_count})`);
+      }
+    } else {
+      console.log(`[WORKER] ✅ stuck job 없음`);
+    }
+  } catch (err) {
+    console.error("[WORKER] stuck job 복구 실패:", err);
+  }
+}
+
 async function main() {
   console.log("=".repeat(50));
   console.log("🧑‍🏭 RFP Worker 시작 (map-reduce 모드)");
@@ -555,6 +584,9 @@ async function main() {
   console.log(`   Polling interval: 2초`);
   console.log(`   PID: ${process.pid}`);
   console.log("=".repeat(50));
+
+  // ── Stuck job 복구: 10분 이상 processing인 job → pending ──
+  await recoverStuckJobs();
 
   while (true) {
     await poll();
