@@ -27,7 +27,7 @@ pnpm db:push
 1. **Stuck job 복구**: Worker 시작 시 10분 이상 `processing` 상태인 job → `pending` 복구 ✅ 완료
 2. **모든 블록 실패 감지**: 성공 블록 0개 → job failed 처리 ✅ 완료
 3. **DOCX 파서 분기**: `mammoth` 라이브러리 사용 (이미 설치됨) ✅ 완료
-4. **사업기간 정규식 fallback**: LLM 실패 시 정규식으로 "사업기간", "계약기간" 등 키워드 검색
+4. **사업기간 정규식 fallback**: LLM 실패 시 정규식으로 "사업기간", "계약기간" 등 키워드 검색 ✅ 완료
 
 ### P2 — 추출 품질
 
