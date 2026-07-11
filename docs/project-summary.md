@@ -613,7 +613,7 @@ DATABASE_URL="postgres://rfpuser:rfppass@localhost:5433/rfp-demo"
 
 # LLM API (OpenCode Go 플랜)
 LLM_API_BASE="https://opencode.ai/zen/go/v1"
-LLM_API_KEY="sk-GD0pixBBkgsxSZ2jcXTEWJ845pPzsTlB5VHtR6MpNTJPi4Om2juDIIbtYyyHZSDA"
+LLM_API_KEY="OPENCODE_API_KEY"
 LLM_MODEL="minimax-m2.7"
 ```
 

@@ -368,7 +368,7 @@ export default function ProjectClient({ data, autoAnalyze }: Props) {
 
           {selected && (
             <div className="w-96 shrink-0">
-              <div className="rounded-xl border border-gray-200 bg-white p-5">
+              <div className="sticky top-6 rounded-xl border border-gray-200 bg-white p-5 max-h-[calc(100vh-8rem)] overflow-y-auto">
                 <h3 className="font-semibold text-gray-900">
                   {selected.name || selected.original_id || `요구사항 #${selected.order}`}
                 </h3>
