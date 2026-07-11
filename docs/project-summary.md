@@ -1043,3 +1043,73 @@ docker exec rfp-demo-db psql -U rfpuser -d rfp-demo -c "
 > **문서 최종 갱신**: 2026-07-10
 > **작성자**: pi-agent (minimax-m2.7 → deepseek-v4-flash)
 > **Git 브랜치**: feat/worker-pattern
+
+---
+
+## 17. 다른 AI 모델을 위한 진단 요약
+
+### 프로젝트 상태 (2026-07-11)
+
+RFP PDF 업로드 → AI 요구사항 추출 → 매트릭스 표시까지의 **전체 파이프라인이 동작**합니다.
+
+### 핵심 성과
+
+- 요구사항 추출률: 28.8% → **100%** (ID 기반 경계 블록 분할)
+- 단위 테스트: 22개 (vitest)
+- 통합 테스트: 1회 통과 (59/59)
+
+### 현재 병목
+
+**LLM 호출 횟수 = 59회** (요구사항 ID당 1회).
+- 현재 모델 `kimi-k2.6`: 호출당 17초 → **총 17분**
+- `minimax-m2.7` (이전): 호출당 6.5초 → 총 6분 (2026-07-11 현재 0건 추출로 사용 불가)
+
+### 속도 최적화가 필요한 이유
+
+병목은 PDF 파싱(2초)이 아닌 **LLM 네트워크 왕복(59회)** 에 있습니다.
+`gpt-4o-mini` 키가 있으면 코드 변경 없이 `.env`만 수정 → 2분으로 단축됩니다.
+
+상세 전략: [`docs/optimization-strategy.md`](optimization-strategy.md)
+
+### 기술 스택
+
+| 계층 | 기술 |
+|------|------|
+| 프레임워크 | Next.js 16 App Router |
+| DB | PostgreSQL 16 + pgvector (Docker) |
+| ORM | Drizzle ORM |
+| PDF 파싱 | pdf-parse (JS 라이브러리) |
+| DOCX 파싱 | mammoth (JS 라이브러리) |
+| LLM SDK | OpenAI SDK v6 (OpenCode 게이트웨이 경유) |
+| LLM 모델 | **현재: kimi-k2.6** (minimax-m2.7 사용 불가) |
+| Worker | tsx 프로세스 (DB polling) |
+| 테스트 | vitest (22 unit tests) |
+
+### 완료된 작업 (M0-P3)
+
+- M0: 파이프라인 진단
+- M1: ID 검출 + 경계 블록 분할 + 진단 로그
+- M2: LLM 응답 검증 + 재시도 + raw_only 보존
+- M3: DB 트랜잭션 + 중복 방지
+- P1: Stuck job 복구, 실패 감지, DOCX 지원, 사업기간 regex
+- P2: scoreCandidate 튜닝, 재시도 프롬프트 개선
+- P3: Worker pool, vitest 자동화
+
+### 보류된 작업
+
+- **gpt-4o-mini 전환**: OpenAI API 키 필요 (`.env` 3줄만 변경하면 즉시 적용)
+- **bge-m3 임베딩**: 서버 URL 설정됨, Worker 코드 준비 완료, `pnpm db:push`만 하면 활성화
+
+### 현재 알려진 제한사항
+
+1. **속도**: 59회 LLM 호출로 17분 소요 (kimi-k2.6 기준)
+2. **모델 의존**: minimax-m2.7 작동 중단, kimi-k2.6만 정상 동작
+3. **임베딩**: document_chunks 테이블 준비됐으나 embedding 생성 대기 중
+4. **Worker 단일 스레드**: 순차 처리, 병렬 미적용
+5. **마이그레이션 미적용**: UNIQUE constraint 파일만 생성, `db:push` 필요
+
+### 검토 요청 사항
+
+- `docs/optimization-strategy.md`의 4가지 전략 검토
+- LLM 모델 선택 (`kimi-k2.6` vs `gpt-4o-mini`)
+- 벡터 임베딩 활성화 우선순위
