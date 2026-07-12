@@ -329,14 +329,14 @@ async function handleRfpAnalyze(job: any) {
 
   const allReqs: any[] = [];
   const sysPrompt = [
-    "RFP 문서에서 요구사항을 JSON 배열로 추출하세요.",
-    '출력: {"requirements":[{"id":"ECR-001","name":"요구사항 명칭","sourceText":"상세 설명","type":"technical","priority":"essential"}]}',
+    "RFP 문서에서 요구사항 정보를 JSON으로 추출하세요.",
+    "sourceText는 이미 시스템이 보유하고 있으므로 name, type, priority만 반환하세요.",
+    '출력: {"requirements":[{"id":"ECR-001","name":"요구사항 명칭","type":"technical","priority":"essential"}]}',
     "id: RFP에 기재된 고유번호 (ECR-001, SFR-005 등). 없으면 null",
-    "name: 요구사항 명칭. 원문 그대로",
-    "sourceText: 요구사항 상세 내용. 원문 그대로",
-    "type: technical | security | operation | qualification | format | general",
-    "priority: essential | recommended | optional",
-    "반드시 유효한 JSON만 출력. 생각 과정 출력 금지.",
+    "name: 요구사항 명칭. 원문 그대로. 판단할 수 없으면 null",
+    "type: technical | security | operation | qualification | format | general. 판단할 수 없으면 null",
+    "priority: essential | recommended | optional. 판단할 수 없으면 null",
+    "반드시 유효한 JSON만 출력. sourceText 필드는 포함하지 마세요.",
   ].join("\n");
 
   let successfulBlocks = 0;
@@ -384,7 +384,12 @@ async function handleRfpAnalyze(job: any) {
           has_match: true,
         });
         log(jobId, `  블록 ${i + 1}/${blocks.length}: ✅ ${blockReqs.length}개 추출`);
-        allReqs.push(...blockReqs);
+        // LLM 응답에 원문 블록을 sourceText로 설정 (LLM이 생성한 sourceText는 무시)
+        const enrichedReqs = blockReqs.map((r: any) => ({
+          ...r,
+          sourceText: block.text.slice(0, 1000),
+        }));
+        allReqs.push(...enrichedReqs);
       } else {
         diag(jobId, `block_mismatch`, {
           block_index: i,
@@ -405,14 +410,15 @@ async function handleRfpAnalyze(job: any) {
       try {
         const retryPrompt = [
           `RFP 문서 요구사항 ID "${block.expectedId}"에 해당하는 텍스트입니다.`,
-          `아래 JSON 형식으로 name, sourceText, type, priority를 추출하세요.`,
+          `아래 JSON 형식으로 name, type, priority만 추출하세요.`,
           `반드시 id 필드에 "${block.expectedId}"를 그대로 사용하세요. 다른 ID를 생성하지 마세요.`,
           ``,
           `출력 예시:`,
-          `{"requirements":[{"id":"${block.expectedId}","name":"요구사항 명칭","sourceText":"상세 설명","type":"technical","priority":"essential"}]}`,
+          `{"requirements":[{"id":"${block.expectedId}","name":"요구사항 명칭","type":"technical","priority":"essential"}]}`,
           ``,
-          `type: technical | security | operation | qualification | format | general`,
-          `priority: essential | recommended | optional`,
+          `type: technical | security | operation | qualification | format | general (판단 불가 시 null)`,
+          `priority: essential | recommended | optional (판단 불가 시 null)`,
+          `sourceText 필드는 절대 포함하지 마세요.`,
         ].join("\n");
         const retryRes = await callLLM(client, model, retryPrompt, block.text + "\n\nJSON:", 4096, 30000);
         const retryContent = retryRes.choices[0]?.message?.content || "";
@@ -427,7 +433,12 @@ async function handleRfpAnalyze(job: any) {
           successfulBlocks++;
           diag(jobId, `block_retry_ok`, { block_index: i, expected_id: block.expectedId });
           log(jobId, `  블록 ${i + 1}/${blocks.length}: ✅ 재시도 성공`);
-          allReqs.push(...retryReqs);
+          // 재시도 성공 시에도 원문 블록을 sourceText로 설정
+          const enrichedRetryReqs = retryReqs.map((r: any) => ({
+            ...r,
+            sourceText: block.text.slice(0, 1000),
+          }));
+          allReqs.push(...enrichedRetryReqs);
         }
       } catch (e: any) {
         log(jobId, `  블록 ${i + 1}/${blocks.length}: ❌ 재시도 실패: ${e.message.slice(0, 60)}`);

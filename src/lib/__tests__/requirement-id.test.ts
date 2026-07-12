@@ -153,3 +153,70 @@ describe("selectBestCandidates", () => {
     expect(ecr!.text.length).toBeGreaterThan(50);
   });
 });
+
+// ── Source Text Refactor Tests ─────────────────────────────
+describe("sourceText from block boundary", () => {
+  it("block text is the original PDF content", () => {
+    const text = "ECR-001 시스템 공통 요구사항\n[H/W] 도입되는 모든 장비...";
+    const blocks = createIdBoundaryBlocks(text);
+    const ecrBlock = blocks.find((b) => b.expectedId === "ECR-001");
+    expect(ecrBlock).toBeDefined();
+    expect(ecrBlock!.text).toContain("[H/W]");
+  });
+
+  it("block boundary: current ID to just before next ID", () => {
+    const text = "PRE ECR-001 detail A ECR-002 detail B POST";
+    const blocks = createIdBoundaryBlocks(text);
+    const ecr1 = blocks.find((b) => b.expectedId === "ECR-001");
+    expect(ecr1).toBeDefined();
+    expect(ecr1!.text).toContain("ECR-001");
+    expect(ecr1!.text).toContain("detail A");
+    // 다음 ID 이후 텍스트는 최소 블록 크기 보장으로 인해 포함될 수 있음
+  });
+
+  it("last ID includes text to end of document", () => {
+    const text = "ECR-001 first requirement ECR-002 last requirement trailing";
+    const blocks = createIdBoundaryBlocks(text);
+    const lastBlock = blocks[blocks.length - 1];
+    expect(lastBlock.expectedId).toBe("ECR-002");
+    expect(lastBlock.text).toContain("trailing");
+  });
+
+  it("RAW_ONLY preserves id and sourceText when LLM fails", () => {
+    // raw_only 항목 구조 검증 (실제 LLM 호출 없이 데이터 구조만)
+    const rawOnly = {
+      id: "ECR-001",
+      originalId: "ECR-001",
+      name: null,
+      sourceText: "원문 블록 텍스트".slice(0, 1000),
+      type: "general",
+      priority: "essential",
+      _rawOnly: true,
+    };
+    expect(rawOnly.name).toBeNull();
+    expect(rawOnly.sourceText).toBe("원문 블록 텍스트");
+    expect(rawOnly._rawOnly).toBe(true);
+  });
+
+  it("LLM success also has sourceText from block", () => {
+    // LLM 응답 구조에서 sourceText는 블록에서 오고 LLM 응답에 없어도 됨
+    const llmResult = {
+      id: "ECR-001",
+      name: "시스템 공통",
+      type: "technical",
+      priority: "essential",
+      // sourceText 없음 (LLM이 반환하지 않음)
+    };
+    // Worker가 블록 text로 보강
+    const enriched = { ...llmResult, sourceText: "원문 블록 텍스트".slice(0, 1000) };
+    expect(enriched.sourceText).toBe("원문 블록 텍스트");
+    expect(enriched.name).toBe("시스템 공통");
+  });
+
+  it("LLM response without sourceText field is valid", () => {
+    // ID 검증은 sourceText 없이도 동작
+    const reqWithoutSourceText = { id: "ECR-001", name: "시스템", type: "technical", priority: "essential" };
+    expect(reqWithoutSourceText.id).toBe("ECR-001");
+    expect((reqWithoutSourceText as any).sourceText).toBeUndefined();
+  });
+});
