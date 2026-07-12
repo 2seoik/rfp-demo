@@ -11,6 +11,7 @@ import {
   createIdBoundaryBlocks,
   selectBestCandidates,
   scoreCandidate,
+  type RequirementBlock,
 } from "../src/lib/requirement-id";
 
 let passed = 0;
