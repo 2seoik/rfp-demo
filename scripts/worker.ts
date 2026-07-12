@@ -13,6 +13,17 @@ import {
   createIdBoundaryBlocks,
   selectBestCandidates,
 } from "../src/lib/requirement-id";
+import {
+  enrichBatch,
+  getPrimaryModel,
+  getFallbackModels,
+  parseResponseJson,
+  isEmptyResponse,
+  formatDiagnostic,
+  classifyProviderError,
+  type RequirementBatchInput,
+  type DiagnosticMeta,
+} from "../src/lib/provider";
 
 // ─── Utils ─────────────────────────────────────────────────
 function cleanText(text: string): string {
@@ -43,51 +54,14 @@ async function updateJob(jobId: string, updates: Partial<typeof jobs.$inferInser
   await db.update(jobs).set({ ...updates, updatedAt: new Date() }).where(eq(jobs.id, jobId));
 }
 
-// ─── Chunk splitting for map-reduce ────────────────────────
-function splitIntoChunks(text: string, chunkSize = 4000, overlap = 500): string[] {
-  const chunks: string[] = [];
-  for (let i = 0; i < text.length; i += chunkSize - overlap) {
-    chunks.push(text.slice(i, i + chunkSize));
-    if (i + chunkSize >= text.length) break;
-  }
-  return chunks;
+// ─── Error Classification (Provider 기반) ─────────────────
+function classifyError(e: any): string {
+  const { errorType } = classifyProviderError(e);
+  return errorType;
 }
 
-// ─── LLM call with timeout ─────────────────────────────────
-async function callLLM(
-  client: any,
-  model: string,
-  systemPrompt: string,
-  userContent: string,
-  maxTokens: number,
-  timeoutMs: number
-): Promise<any> {
-  return client.chat.completions.create(
-    {
-      model,
-      messages: [
-        { role: "system", content: systemPrompt },
-        { role: "user", content: userContent },
-      ],
-      max_tokens: maxTokens,
-      temperature: 0.1,
-    } as any,
-    { signal: AbortSignal.timeout(timeoutMs) }
-  );
-}
-
-// ─── Parse LLM response ────────────────────────────────────
-function parseLLMResponse(content: string): any[] {
-  let raw: any;
-  try {
-    raw = JSON.parse(content);
-  } catch {
-    const m = content.match(/\{[\s\S]*\}/);
-    if (m) try { raw = JSON.parse(m[0]); } catch {}
-  }
-  if (!raw) return [];
-  if (Array.isArray(raw)) return raw;
-  return raw.requirements || [];
+function backoffDelay(retryCount: number): number {
+  return Math.min(1000 * Math.pow(2, retryCount) + Math.random() * 500, 10000);
 }
 
 // ─── Deduplicate by ID ─────────────────────────────────────
@@ -191,19 +165,6 @@ function reconcileBatchResult(inputIds: string[], outputReqs: any[]): {
     (r: any) => r.id && inputSet.has((r.id || "").toUpperCase())
   );
   return { valid, missingIds, unknownIds };
-}
-
-// ─── Error Classification ─────────────────────────────────
-function classifyError(e: any): string {
-  const msg = e.message || String(e);
-  if (msg.includes("Request was aborted") || msg.includes("timeout")) return "timeout";
-  if (msg.includes("429")) return "rate_limit";
-  if (msg.includes("5") && (msg.includes("500") || msg.includes("502") || msg.includes("503"))) return "server_error";
-  return "unknown";
-}
-
-function backoffDelay(retryCount: number): number {
-  return Math.min(1000 * Math.pow(2, retryCount) + Math.random() * 500, 10000);
 }
 
 // ─── Job Handler ───────────────────────────────────────────
@@ -358,7 +319,16 @@ async function handleRfpAnalyze(job: any) {
     baseURL: process.env.LLM_API_BASE,
     apiKey: process.env.LLM_API_KEY,
   });
-  const model = process.env.LLM_MODEL || "minimax-m2.7";
+  const model = getPrimaryModel();
+  const fallbackModels = getFallbackModels();
+
+  const diagHandler = (meta: DiagnosticMeta) => {
+    diag(jobId, "provider", {
+      batch_index: -1,
+      ...meta,
+      rawContentPreview: process.env.RFP_LLM_DEBUG_RESPONSE === "true" ? meta.rawContentPreview : "[disabled]",
+    });
+  };
 
   // 5. 사업정보 추출 (정규식 우선 + LLM fallback)
   let projectInfo: any = {};
@@ -375,13 +345,16 @@ async function handleRfpAnalyze(job: any) {
   // ── 2차: LLM fallback (정규식 실패 시) ──────────────
   if (!projectInfo.period) {
     try {
-      const infoRes = await callLLM(
-        client,
-        model,
-        'RFP 문서에서 사업기간을 찾아 JSON으로 출력. {"period": "사업기간"}. 없으면 {"period": null}. JSON만 출력.',
-        headerText + "\n\nJSON:",
-        512,
-        30000
+      const infoRes = await client.chat.completions.create(
+        {
+          model,
+          messages: [
+            { role: "system", content: 'RFP 문서에서 사업기간을 찾아 JSON으로 출력. {"period": "사업기간"}. 없으면 {"period": null}. JSON만 출력.' },
+            { role: "user", content: headerText + "\n\nJSON:" },
+          ],
+          max_tokens: 512,
+        } as any,
+        { signal: AbortSignal.timeout(30000) }
       );
       const infoContent = infoRes.choices[0]?.message?.content || "";
       try {
@@ -423,23 +396,6 @@ async function handleRfpAnalyze(job: any) {
   const allReqs: any[] = [];
   const resultByBlock = new Map<string, { success: boolean; data: any }>();
 
-  // Batch system prompt
-  const batchSysPrompt = [
-    "RFP 요구사항 목록을 받아 각 요구사항의 name, type, priority를 JSON으로 반환하세요.",
-    '출력: {"requirements":[{"id":"ECR-001","name":"명칭","type":"technical","priority":"essential"}]}',
-    "",
-    "규칙:",
-    "- 입력으로 받은 모든 ID에 대해 정확히 하나의 결과를 반환한다.",
-    "- ID 문자열을 수정하지 않는다.",
-    "- 입력에 없는 ID를 생성하지 않는다.",
-    "- 같은 ID를 두 번 반환하지 않는다.",
-    "- 결과는 입력 순서를 유지한다.",
-    "- 판단할 수 없는 값은 null로 반환한다.",
-    "- JSON 외의 설명이나 마크다운을 출력하지 않는다.",
-    "- type: technical | security | operation | qualification | format | general",
-    "- priority: essential | recommended | optional",
-  ].join("\n");
-
   // 1차: 배치 생성 + 병렬 처리
   const batches = createBatches(blocks, BATCH_MAX_ITEMS, BATCH_MAX_CHARS);
   log(jobId, `📦 배치 생성: ${blocks.length}개 블록 → ${batches.length}개 배치 (동시 ${LLM_CONCURRENCY}개)`);
@@ -455,49 +411,51 @@ async function handleRfpAnalyze(job: any) {
     });
 
     const inputIds = batch.items.map((b: BatchItem) => b.expectedId);
-    const inputTexts = batch.items.map((b: BatchItem) =>
-      `--- ID: ${b.expectedId} ---\n${b.text.slice(0, 1500)}`
-    ).join("\n\n");
 
     try {
-      const res = await callLLM(
-        client, model, batchSysPrompt,
-        `입력 ID: ${inputIds.join(", ")}\n\n${inputTexts}\n\nJSON:`,
-        4096, LLM_TIMEOUT_MS
+      const input: RequirementBatchInput = {
+        requirements: batch.items.map((b: BatchItem) => ({
+          id: b.expectedId,
+          text: b.text,
+        })),
+      };
+
+      const output = await enrichBatch(client, model, input, {
+        timeoutMs: LLM_TIMEOUT_MS,
+        onDiagnostic: (meta) => {
+          diag(jobId, "provider", {
+            batch_index: batchIdx,
+            ...meta,
+            rawContentPreview: process.env.RFP_LLM_DEBUG_RESPONSE === "true"
+              ? meta.rawContentPreview : "[disabled]",
+          });
+        },
+      });
+
+      const reconciliation = reconcileBatchResult(
+        inputIds,
+        output.requirements.map((r: any) => ({ id: r.id, name: r.name }))
       );
-      const content = res.choices[0]?.message?.content || "";
-      const outputReqs = parseLLMResponse(content);
-      const reconciliation = reconcileBatchResult(inputIds, outputReqs);
 
       // 성공 ID 저장
-      for (const r of reconciliation.valid) {
-        const blockItem = batch.items.find((b: BatchItem) => b.expectedId === (r.id || "").toUpperCase());
+      for (const r of output.requirements) {
+        const blockItem = batch.items.find((b: BatchItem) => b.expectedId === r.id.toUpperCase());
         resultByBlock.set(r.id.toUpperCase(), {
           success: true,
-          data: { ...r, sourceText: (blockItem?.text || "").slice(0, 1000) },
+          data: { id: r.id, name: r.name, type: r.type, priority: r.priority, sourceText: (blockItem?.text || "").slice(0, 1000) },
         });
       }
 
-      // 누락/불일치 ID는 실패로 표시
+      // 누락 ID는 실패로 표시
       for (const id of reconciliation.missingIds) {
         resultByBlock.set(id, { success: false, data: { id, name: null } });
       }
-
-      diag(jobId, `batch_result`, {
-        batch_index: batchIdx,
-        batch_size: batch.items.length,
-        input_ids: inputIds.slice(0, 10),
-        valid_count: reconciliation.valid.length,
-        missing_count: reconciliation.missingIds.length,
-        unknown_count: reconciliation.unknownIds.length,
-        elapsed_ms: 0,  // LLM 시간은 callLLM 내부에서 측정 안 됨
-      });
 
       completedCount += reconciliation.valid.length;
       failedCount += reconciliation.missingIds.length;
       log(jobId, `  배치 ${batchIdx + 1}/${batches.length}: ✅ ${reconciliation.valid.length}개 / ❌ ${reconciliation.missingIds.length}개 누락`);
     } catch (e: any) {
-      const errorType = classifyError(e);
+      const { errorType, retryable } = classifyProviderError(e);
       log(jobId, `  배치 ${batchIdx + 1}/${batches.length}: ❌ ${errorType}: ${e.message.slice(0, 60)}`);
       // 모든 입력 ID를 실패로 표시
       for (const id of inputIds) {
@@ -528,25 +486,28 @@ async function handleRfpAnalyze(job: any) {
 
       const retryTasks = retryBatches.map((batch, bi) => async () => {
         const inputIds = batch.items.map((b: BatchItem) => b.expectedId);
-        const inputTexts = batch.items.map((b: BatchItem) =>
-          `--- ID: ${b.expectedId} ---\n${b.text.slice(0, 1500)}`
-        ).join("\n\n");
+        // 실패 ID는 fallback 모델이 있으면 fallback 사용
+        const retryModel = fallbackModels.length > 0 ? fallbackModels[0] : model;
 
         try {
-          const res = await callLLM(client, model, batchSysPrompt,
-            `입력 ID: ${inputIds.join(", ")}\n\n${inputTexts}\n\nJSON:`, 4096, LLM_TIMEOUT_MS);
-          const content = res.choices[0]?.message?.content || "";
-          const outputReqs = parseLLMResponse(content);
-          const reconciliation = reconcileBatchResult(inputIds, outputReqs);
+          const input: RequirementBatchInput = {
+            requirements: batch.items.map((b: BatchItem) => ({ id: b.expectedId, text: b.text })),
+          };
+          const output = await enrichBatch(client, retryModel, input, { timeoutMs: LLM_TIMEOUT_MS });
 
-          for (const r of reconciliation.valid) {
-            const blockItem = batch.items.find((b: BatchItem) => b.expectedId === (r.id || "").toUpperCase());
+          const reconciliation = reconcileBatchResult(
+            inputIds,
+            output.requirements.map((r: any) => ({ id: r.id, name: r.name }))
+          );
+
+          for (const r of output.requirements) {
+            const blockItem = batch.items.find((b: BatchItem) => b.expectedId === r.id.toUpperCase());
             resultByBlock.set(r.id.toUpperCase(), {
               success: true,
-              data: { ...r, sourceText: (blockItem?.text || "").slice(0, 1000) },
+              data: { id: r.id, name: r.name, type: r.type, priority: r.priority, sourceText: (blockItem?.text || "").slice(0, 1000) },
             });
           }
-          log(jobId, `    재시도 배치 ${bi + 1}: ✅ ${reconciliation.valid.length}개 / ❌ ${reconciliation.missingIds.length}개`);
+          log(jobId, `    재시도 배치 ${bi + 1} (${retryModel}): ✅ ${reconciliation.valid.length}개 / ❌ ${reconciliation.missingIds.length}개`);
         } catch (e: any) {
           await sleep(backoffDelay(retry));
         }

@@ -44,4 +44,30 @@
          실패 ID만 재시도 (최대 2회) → 최종 실패는 raw_only 보존
 ```
 
-## 3단계: provider-benchmark-embedding ⬜
+## 3단계: provider-benchmark-embedding ✅ 완료
+
+- [x] Provider adapter 인터페이스 구현 (RequirementBatchInput/Output)
+- [x] OpenAI-compatible adapter (enrichBatch)
+- [x] 응답 정규화 (normalizeLlmResponse: 배열/객체/code fence 처리)
+- [x] 빈 응답 분류 (EMPTY_RESPONSE)
+- [x] 모델 설정 구조화 (MODEL_CONFIG)
+- [x] primary/fallback 모델 환경변수 지원
+- [x] 오류 분류 및 retryable 판단 (classifyProviderError)
+- [x] 진단 로깅 (DiagnosticMeta + formatDiagnostic)
+- [x] 벤치마크 스크립트 (scripts/benchmark.ts + benchmark:rfp)
+- [x] Worker에서 provider 통합 (classifyError, enrichBatch)
+- [x] 불필요한 유틸리티 제거 (callLLM, parseLLMResponse, batchSysPrompt)
+- [x] 테스트 35/35 + 49/49 통과
+- [x] TypeScript 타입 체크 통과
+
+### 수정 파일
+- `src/lib/provider.ts` — 신규 provider adapter 모듈
+- `scripts/worker.ts` — provider 통합, 불필요 함수 제거
+- `scripts/benchmark.ts` — 신규 벤치마크 스크립트
+- `package.json` — benchmark:rfp 스크립트 추가
+- `docs/agent-tasks/progress.md` — 이 파일
+
+### 운영 적용 전 확인사항
+- `.env` 또는 환경변수에 `RFP_LLM_PRIMARY_MODEL`, `RFP_LLM_FALLBACK_MODELS` 설정
+- `RFP_LLM_DEBUG_RESPONSE=true` 설정 시 원본 응답 미리보기 출력 (API 키 제외)
+- 벤치마크 실행: `pnpm benchmark:rfp --models=kimi-k2.6 --batch-sizes=5,10 --concurrency=1,2`

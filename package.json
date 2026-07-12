@@ -12,6 +12,7 @@
     "db:push": "drizzle-kit push",
     "db:studio": "drizzle-kit studio",
     "worker": "tsx watch scripts/worker.ts",
+    "benchmark:rfp": "tsx scripts/benchmark.ts",
     "test": "vitest run",
     "test:watch": "vitest"
   },
