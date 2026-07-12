@@ -1,23 +1,8 @@
 // ─── RFP LLM Provider Benchmark ─────────────────────────────
-// 독립 실행 가능한 벤치마크 도구
 // 실행: pnpm tsx scripts/benchmark.ts [--models=...] [--batch-sizes=...] [--concurrency=...]
 
 import { readFileSync } from "fs";
 import OpenAI from "openai";
-
-// .env 로드
-const envContent = readFileSync(process.cwd() + "/.env", "utf-8");
-for (const line of envContent.split("\n")) {
-  const t = line.trim();
-  if (!t || t.startsWith("#")) continue;
-  const eq = t.indexOf("=");
-  if (eq === -1) continue;
-  const key = t.slice(0, eq).trim();
-  const val = t.slice(eq + 1).trim().replace(/^["']|["']$/g, "");
-  if (!process.env[key]) process.env[key] = val;
-}
-
-const { PDFParse } = await import("pdf-parse");
 import {
   detectAllIds,
   createIdBoundaryBlocks,
@@ -33,7 +18,23 @@ import {
   type DiagnosticMeta,
 } from "../src/lib/provider";
 
-function cleanText(text: string): string {
+async function main() {
+
+// .env 로드
+const envContent = readFileSync(process.cwd() + "/.env", "utf-8");
+for (const line of envContent.split("\n")) {
+  const t = line.trim();
+  if (!t || t.startsWith("#")) continue;
+  const eq = t.indexOf("=");
+  if (eq === -1) continue;
+  const key = t.slice(0, eq).trim();
+  const val = t.slice(eq + 1).trim().replace(/^["']|["']$/g, "");
+  if (!process.env[key]) process.env[key] = val;
+}
+
+  const { PDFParse } = await import("pdf-parse");
+
+  function cleanText(text: string): string {
   return text.replace(/\t/g, " ").replace(/[ ]+/g, " ").replace(/ ·+/g, "")
     .replace(/^[ ]+/gm, "").replace(/\n{3,}/g, "\n\n").replace(/-- \d+ of \d+ --/g, "").trim();
 }
@@ -199,3 +200,6 @@ const ts = new Date().toISOString().replace(/[:.]/g, "-").slice(0, 19);
 const outFile = `${outDir}/rfp-benchmark-${ts}.json`;
 await import("fs/promises").then((fs) => fs.writeFile(outFile, JSON.stringify(results, null, 2)));
 console.log(`\n📁 결과 저장: ${outFile}`);
+}
+
+main().catch((e) => { console.error(e); process.exit(1); });
