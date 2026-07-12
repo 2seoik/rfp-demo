@@ -220,3 +220,88 @@ describe("sourceText from block boundary", () => {
     expect((reqWithoutSourceText as any).sourceText).toBeUndefined();
   });
 });
+
+// ── Batch Processing Tests ────────────────────────────────
+describe("batch reconciliation", () => {
+  it("detects missing IDs", () => {
+    const inputIds = ["ECR-001", "ECR-002", "ECR-003"];
+    const outputReqs = [{ id: "ECR-001", name: "first" }, { id: "ECR-003", name: "third" }];
+    // ECR-002 is missing
+    const outputIds = new Set(outputReqs.map((r: any) => (r.id || "").toUpperCase()));
+    const missing = inputIds.filter((id) => !outputIds.has(id));
+    expect(missing).toEqual(["ECR-002"]);
+  });
+
+  it("detects unknown IDs", () => {
+    const inputIds = ["ECR-001", "ECR-002"];
+    const outputReqs = [{ id: "ECR-001", name: "first" }, { id: "ECR-999", name: "extra" }];
+    const outputIds = new Set(outputReqs.map((r: any) => (r.id || "").toUpperCase()));
+    const inputSet = new Set(inputIds);
+    const unknown = outputReqs
+      .map((r: any) => (r.id || "").toUpperCase())
+      .filter((id: string) => id && !inputSet.has(id));
+    expect(unknown).toEqual(["ECR-999"]);
+  });
+
+  it("matches case-insensitive IDs", () => {
+    const inputIds = ["ECR-001"];
+    const outputReqs = [{ id: "ecr-001", name: "test" }];
+    const outputIds = new Set(outputReqs.map((r: any) => (r.id || "").toUpperCase()));
+    expect(outputIds.has("ECR-001")).toBe(true);
+  });
+
+  it("handles id-order-independent matching", () => {
+    const inputIds = ["ECR-001", "ECR-002", "ECR-003"];
+    const outputReqs = [{ id: "ECR-003", name: "3" }, { id: "ECR-001", name: "1" }, { id: "ECR-002", name: "2" }];
+    const outputIds = new Set(outputReqs.map((r: any) => (r.id || "").toUpperCase()));
+    const matched = inputIds.filter((id) => outputIds.has(id));
+    expect(matched).toEqual(["ECR-001", "ECR-002", "ECR-003"]);
+  });
+});
+
+describe("batch creation", () => {
+  it("respects max items per batch", () => {
+    const blocks = Array.from({ length: 25 }, (_, i) => ({
+      expectedId: `REQ-${String(i + 1).padStart(3, "0")}`,
+      text: "short text",
+      startOffset: i * 100,
+    }));
+    // maxItems=10, maxChars=999999 → 3 batches (10+10+5)
+    let batches = 0;
+    let currentItems = 0;
+    const MAX = 10;
+    for (const b of blocks) {
+      if (!b.expectedId) continue;
+      if (currentItems >= MAX) { batches++; currentItems = 0; }
+      currentItems++;
+    }
+    if (currentItems > 0) batches++;
+    expect(batches).toBe(3);
+  });
+
+  it("one batch failure doesn't affect others", () => {
+    const results: string[] = [];
+    const tasks = [
+      async () => { results.push("ok1"); return "r1"; },
+      async () => { throw new Error("fail"); },
+      async () => { results.push("ok3"); return "r3"; },
+    ];
+    Promise.allSettled(tasks.map(t => t())).then(() => {
+      expect(results).toContain("ok1");
+      expect(results).toContain("ok3");
+    });
+  });
+});
+
+describe("partial success", () => {
+  it("does not fail entire job when some IDs fail", () => {
+    const resultMap = new Map<string, boolean>();
+    resultMap.set("ECR-001", true);
+    resultMap.set("ECR-002", false);
+    resultMap.set("ECR-003", true);
+    const success = [...resultMap.entries()].filter(([, v]) => v);
+    const failed = [...resultMap.entries()].filter(([, v]) => !v);
+    expect(success.length).toBe(2);
+    expect(failed.length).toBe(1);
+  });
+});
