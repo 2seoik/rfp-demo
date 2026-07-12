@@ -15,6 +15,7 @@ export interface RequirementBatchOutput {
     type: string | null;
     priority: string | null;
   }>;
+  usage?: { promptTokens: number; completionTokens: number; totalTokens: number };
 }
 
 export interface DiagnosticMeta {
@@ -176,6 +177,11 @@ export async function enrichBatch(
 
     const normalized = normalizeLlmResponse(res, model);
     const elapsed = Date.now() - startMs;
+    const usage = res?.usage ? {
+      promptTokens: res.usage.prompt_tokens || 0,
+      completionTokens: res.usage.completion_tokens || 0,
+      totalTokens: res.usage.total_tokens || 0,
+    } : undefined;
 
     if (isEmptyResponse(normalized.content)) {
       options.onDiagnostic?.({
@@ -207,6 +213,7 @@ export async function enrichBatch(
         type: r.type || null,
         priority: r.priority || null,
       })),
+      usage,
     };
   } catch (e: any) {
     const { errorType, retryable } = classifyProviderError(e);
