@@ -31,7 +31,7 @@ Worker (독립 프로세스)  ←─ DB polling ─┘
 - **DB**: PostgreSQL 16 + pgvector (Docker)
 - **Worker**: `tsx`로 실행되는 별도 프로세스 (2초 polling)
 - **PDF 파싱**: pdf-parse (JavaScript 라이브러리)
-- **LLM**: OpenCode 게이트웨이 → 현재 `kimi-k2.6` 사용
+- **LLM**: OpenCode 게이트웨이 → 현재 `minimax-m2.7` 사용
 
 ---
 

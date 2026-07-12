@@ -67,7 +67,7 @@ export const documentChunks = pgTable(
       .notNull()
       .references(() => documents.id),
     content: text("content").notNull(),
-    embedding: vector("embedding", { dimensions: 1536 }),
+    embedding: vector("embedding", { dimensions: 1536 }), // 1536(OpenAI) / 1024(bge-m3) — ALTER 필요 시 변경
     page: integer("page"),
     section: text("section"),
     metadata: text("metadata"), // JSON string for flexible metadata
