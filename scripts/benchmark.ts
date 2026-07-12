@@ -62,7 +62,7 @@ async function main() {
   const models = getArg("models", "kimi-k2.6").split(",").map((s) => s.trim());
   const batchSizes = getArg("batch-sizes", "10").split(",").map(Number);
   const concurrencies = getArg("concurrency", "2").split(",").map(Number);
-  const pdfPath = getArg("pdf", "docs/test/공고_제안요청서.pdf");
+  const pdfPath = getArg("pdf", "docs/test/fixtures/한국기술대_전자결재_시스템고도화.pdf");
   const timeoutMs = parseInt(getArg("timeout", "60000"), 10);
 
   if (!process.env.LLM_API_KEY) { console.error("❌ LLM_API_KEY 미설정"); process.exit(1); }

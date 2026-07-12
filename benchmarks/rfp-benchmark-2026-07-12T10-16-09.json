@@ -1,0 +1,13 @@
+[
+  {
+    "model": "minimax-m2.7",
+    "batchSize": 5,
+    "concurrency": 1,
+    "totalReqs": 59,
+    "totalBatches": 12,
+    "successBatches": 12,
+    "failedBatches": 0,
+    "extractedIds": 59,
+    "totalElapsedMs": 210168
+  }
+]

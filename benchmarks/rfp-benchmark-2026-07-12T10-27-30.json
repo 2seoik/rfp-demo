@@ -1,0 +1,15 @@
+[
+  {
+    "model": "minimax-m2.7",
+    "batch": 5,
+    "conc": 1,
+    "reqs": 59,
+    "batches": 12,
+    "ok": 12,
+    "fail": 0,
+    "ids": 59,
+    "ms": 140163,
+    "tk": 7662,
+    "cost": 0.003831
+  }
+]
