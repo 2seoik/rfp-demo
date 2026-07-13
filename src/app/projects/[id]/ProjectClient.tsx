@@ -664,7 +664,7 @@ export default function ProjectClient({ data, autoAnalyze }: Props) {
                       문서 {doc.breakdown.headerSimilarity}%
                     </span>
                     <span className="inline-flex items-center gap-1 rounded-full bg-blue-50 px-2.5 py-0.5 text-xs font-medium text-blue-700">
-                      요구사항 {doc.contentMatchCount}건
+                      요구사항 {doc.breakdown.contentSimilarity}%
                     </span>
                     {doc.breakdown.idOverlap > 0 && (
                       <span className="inline-flex items-center gap-1 rounded-full bg-gray-100 px-2.5 py-0.5 text-xs text-gray-500">
