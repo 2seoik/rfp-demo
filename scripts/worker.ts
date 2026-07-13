@@ -120,7 +120,7 @@ function cleanDescription(blockText: string, id: string, name: string | null): s
       const s = l.trim();
       if (!s) continue;
       if (!buf) { buf = s; continue; }
-      if (/[가-힣]$/.test(buf) && !isSentenceEnd.test(buf) && !/^\d+[).]/.test(s)) {
+      if (/[가-힣]$/.test(buf) && !isSentenceEnd.test(buf) && !/^\d+[).]/.test(s) && !(buf.length >= 25 && s.length >= 25)) {
         buf += s;
       } else {
         out.push(buf);

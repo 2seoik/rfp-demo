@@ -472,7 +472,7 @@ export default function ProjectClient({ data, autoAnalyze }: Props) {
                         <p className="font-medium text-gray-900">
                           {req.name || req.original_id || `요구사항 #${req.order}`}
                         </p>
-                        <p className="mt-0.5 text-xs text-gray-500 line-clamp-2">{req.source_text}</p>
+                        <p className="mt-0.5 text-xs text-gray-500 line-clamp-2 whitespace-pre-line">{req.source_text}</p>
                       </td>
                       <td className="px-4 py-3 align-top">
                         <span className="text-xs text-gray-500">{TYPE_LABELS[req.type] ?? req.type}</span>
@@ -493,8 +493,13 @@ export default function ProjectClient({ data, autoAnalyze }: Props) {
                 {selected.original_id && (
                   <p className="mt-0.5 text-xs text-blue-600 font-mono">{selected.original_id} · 순서 #{selected.order}</p>
                 )}
-                <div className="mt-3 rounded-lg bg-gray-50 p-3 text-sm text-gray-700 whitespace-pre-line max-h-48 overflow-y-auto">
-                  {selected.source_text}
+                <div className="mt-3 rounded-lg bg-gray-50 p-3 text-sm text-gray-700 max-h-48 overflow-y-auto">
+                  {selected.source_text.split('\n').map((line, i) => (
+                    <div key={i} className="flex gap-1.5">
+                      <span className="text-gray-300 shrink-0 select-none">•</span>
+                      <span>{line}</span>
+                    </div>
+                  ))}
                 </div>
                 <div className="mt-4 flex flex-wrap gap-2">
                   <span className={`rounded-full px-2 py-0.5 text-xs font-medium ${PRIORITY_BADGES[selected.priority]?.class ?? ""}`}>
