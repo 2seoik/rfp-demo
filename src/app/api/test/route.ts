@@ -1,6 +1,15 @@
 import { NextResponse } from "next/server";
 
 export async function GET() {
+  // 디버그 전용 엔드포인트: 인증 시스템이 없으므로 프로덕션 노출을 차단한다.
+  // 개발 환경에서만 LLM 연결을 테스트한다. (rfp-pipeline-spec.md §16.9 / §17.4)
+  if (process.env.NODE_ENV === "production") {
+    return NextResponse.json(
+      { error: "Not available in production" },
+      { status: 404 }
+    );
+  }
+
   try {
     const OpenAI = (await import("openai")).default;
     const client = new OpenAI({

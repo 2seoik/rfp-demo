@@ -12,15 +12,36 @@ export async function POST(request: Request) {
     const projectName = formData.get("name") as string || "새 RFP 분석";
     if (!file) return NextResponse.json({ error: "파일이 없습니다." }, { status: 400 });
 
-    const ext = path.extname(file.name).toLowerCase();
+    // 파일명 정규화: path traversal 방지 (rfp-pipeline-spec.md §16.6 / §17.1)
+    const safeName = path.basename(file.name);
+    const ext = path.extname(safeName).toLowerCase();
     if (![".pdf", ".docx"].includes(ext)) {
       return NextResponse.json({ error: "PDF 또는 DOCX 파일만 지원합니다." }, { status: 400 });
+    }
+
+    // MIME 타입 검증 (file.type이 제공된 경우에만 확장자와 매칭)
+    const allowedMimes: Record<string, string[]> = {
+      ".pdf": ["application/pdf"],
+      ".docx": ["application/vnd.openxmlformats-officedocument.wordprocessingml.document"],
+    };
+    const expectedMimes = allowedMimes[ext] ?? [];
+    if (file.type && !expectedMimes.includes(file.type)) {
+      return NextResponse.json({ error: "파일 MIME 타입이 확장자와 일치하지 않습니다." }, { status: 400 });
+    }
+
+    // 최대 파일 크기 검증 (50MB)
+    const MAX_FILE_SIZE = 50 * 1024 * 1024;
+    if (file.size > MAX_FILE_SIZE) {
+      return NextResponse.json({ error: "파일 크기는 50MB 이하여야 합니다." }, { status: 413 });
+    }
+    if (file.size === 0) {
+      return NextResponse.json({ error: "빈 파일은 업로드할 수 없습니다." }, { status: 400 });
     }
 
     // 1. 파일 저장
     const uploadDir = path.join(process.cwd(), "uploads");
     await mkdir(uploadDir, { recursive: true });
-    const filePath = path.join(uploadDir, `${Date.now()}_${file.name}`);
+    const filePath = path.join(uploadDir, `${Date.now()}_${safeName}`);
     const buffer = Buffer.from(await file.arrayBuffer());
     await writeFile(filePath, buffer);
 
@@ -44,7 +65,7 @@ export async function POST(request: Request) {
       orgId: org.id,
       projectId: project.id,
       type: "rfp",
-      name: file.name,
+      name: safeName,
       fileUrl: filePath,
       parsedStatus: "pending",
     }).returning();

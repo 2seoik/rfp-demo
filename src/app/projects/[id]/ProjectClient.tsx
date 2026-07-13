@@ -3,6 +3,14 @@
 import { useState, useEffect, useRef } from "react";
 import { useRouter } from "next/navigation";
 
+// ts_headline 등에서 생성된 HTML에서 <mark>~</mark> 리터럴만 허용하고
+// 그 외 모든 태그(속성이 있는 <mark ...> 포함)는 제거한다. (rfp-pipeline-spec.md §16.8 / §17.2)
+function sanitizeMarkHtml(html: string): string {
+  return html.replace(/<[^>]*>/g, (tag) =>
+    tag === "<mark>" || tag === "</mark>" ? tag : ""
+  );
+}
+
 type Requirement = {
   id: string;
   original_id: string | null;
@@ -636,10 +644,7 @@ export default function ProjectClient({ data, autoAnalyze }: Props) {
                           <div
                             className="text-sm text-gray-700 leading-relaxed"
                             dangerouslySetInnerHTML={{
-                              __html: doc.headerMatchText.replace(
-                                /<(?!\/?mark\b)[^>]*>/g,
-                                ""
-                              ),
+                              __html: sanitizeMarkHtml(doc.headerMatchText),
                             }}
                           />
                         </div>
@@ -672,10 +677,7 @@ export default function ProjectClient({ data, autoAnalyze }: Props) {
                                       <div
                                         className="mt-1 text-xs text-gray-700 leading-relaxed"
                                         dangerouslySetInnerHTML={{
-                                          __html: pair.targetHeadline.replace(/<[^>]*>/g, (tag) => {
-                                            if (tag === "<mark>" || tag === "</mark>") return tag;
-                                            return "";
-                                          }),
+                                          __html: sanitizeMarkHtml(pair.targetHeadline),
                                         }}
                                       />
                                     ) : pair.matchType === "content" ? (

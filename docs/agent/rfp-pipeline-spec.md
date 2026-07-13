@@ -1420,33 +1420,33 @@ Worker가 성공한 청크 수가 0이면 Job을 `failed`로 처리한다. (원�
 
 Worker 시작 시 `recoverStuckJobs()`로 `processing` 상태 Job을 `pending`으로 복구한다. (원래 항목: stuck Job 복구 로직이 없으면 수동 SQL이 필요하다.)
 
-### 16.6 업로드 검증 미흡 (보안 P0) 🔴
+### 16.6 업로드 검증 미흡 (보안 P0) ✅
 
 `src/app/api/upload/route.ts`는 파일 확장자만 검증하고 MIME 타입과 최대 크기를 검증하지 않는다. 또한 원본 파일명을 그대로 사용해 경로 traversal 위험이 있다. `next.config.ts`에 `bodySizeLimit`도 설정되어 있지 않다.
 
-- MIME 타입 검증, `path.basename()` 정규화, 명시적 크기 제한을 추가한다.
+→ ✅ 해결: `path.basename()` 정규화 + MIME·확장자 매칭 검증 + 50MB 크기 제한 + 빈 파일 차단 추가.
 
-### 16.7 프로젝트 삭제 시 트랜잭션 + 파일 정리 누락 (데이터 무결성 P0) 🔴
+### 16.7 프로젝트 삭제 시 트랜잭션 + 파일 정리 누락 (데이터 무결성 P0) ✅
 
 `DELETE /api/projects/[id]`는 테이블별 DELETE 쿼리를 순서대로 실행하지만 `db.transaction()`으로 래핑하지 않는다. 중간 실패 시 부분 삭제 상태가 된다. 또한 `uploads/` 디렉토리의 원본 파일을 정리하지 않는다.
 
-- 전체 DELETE를 트랜잭션으로 래핑하고, 성공 후 디스크 파일을 정리한다.
+→ ✅ 해결: `db.transaction()`으로 전체 DELETE 래핑 + 커밋 성공 후 `uploads/` 내 파일 best-effort 삭제(`path.isAbsolute` + `startsWith(uploadDir)` 검증).
 
-### 16.8 `dangerouslySetInnerHTML` HTML 주입 위험 (보안 P0) 🔴
+### 16.8 `dangerouslySetInnerHTML` HTML 주입 위험 (보안 P0) ✅
 
-`src/app/projects/[id]/ProjectClient.tsx`(라인 620–625, 660–665)이 `dangerouslySetInnerHTML`로 LLM이 생성한 텍스트/하이라이트 HTML을 직접 주입한다. `similar/route.ts`의 `ts_headline` 결과(`<mark>` 포함)도 이 경로로 들어온다. 허용 태그 화이트리스트 또는 살균(sanitize)이 필요하다.
+`src/app/projects/[id]/ProjectClient.tsx`가 `dangerouslySetInnerHTML`로 `similar/route.ts`의 `ts_headline` 결과(`<mark>` 포함)를 주입했다. 두 사용 지점에 공통 살균 함수 `sanitizeMarkHtml()`를 두어 `<mark>`/`</mark>` 리터럴만 허용하고 그 외 모든 태그(속성이 있는 `<mark onclick=...>` 포함)를 제거한다.
 
-### 16.9 `/api/test` 보호 없음 (보안 P0) 🔴
+### 16.9 `/api/test` 보호 없음 (보안 P0) ✅
 
-`src/app/api/test/route.ts`는 디버그용 엔드포인트로 인증이나 조직 범위 검증 없이 프로덕션에 노출된다. 프로덕션 빌드에서 제외하거나 인증 게이트를 둔다.
+`src/app/api/test/route.ts`는 디버그용 엔드포인트로 인증이나 조직 범위 검증 없이 프로덕션에 노출되었다. 환경 게이트(`NODE_ENV === "production"`일 때 404)를 추가해 프로덕션 노출을 차단했다. 개발 환경에서는 기존 LLM 연결 테스트 동작을 유지한다. 인증 시스템 도입 시 환경 게이트 대신 인증 게이트로 교체를 검토한다.
 
 ### 16.10 재분석 시 기존 요구사항 미삭제 (데이터 무결성 P0) 🔴
 
 Worker가 동일 프로젝트 재분석 시 기존 `requirements`를 삭제하지 않는다. `UNIQUE(project_id, original_id)` 제약과 SELECT-before-INSERT로 중복 INSERT는 막히지만, 이전 분석의 잔재 요구사항이 섞일 수 있다. 재분석 시작 시 동일 `project_id`의 `requirements`를 먼저 비운다.
 
-### 16.11 `analyze-status` 정렬 미지정 (데이터 무결성 P0) 🔴
+### 16.11 `analyze-status` 정렬 미지정 (데이터 무결성 P0) ✅ (실제 문제 아님 — page.tsx에서 이미 `ORDER BY req."order"` 사용)
 
-`GET /api/projects/[id]/analyze-status`가 `ORDER BY` 없이 요구사항을 반환한다. PostgreSQL은 정렬 미지정 시 순서를 보장하지 않으므로, 프론트 매트릭스 행 순서가 호출마다 달라질 수 있다. `ORDER BY "order"` 또는 `ORDER BY original_id`를 명시한다.
+2026-07-13 코드 검토에서 `GET /api/projects/[id]/analyze-status`가 `ORDER BY` 없이 요구사항을 반환한다고 기록했으나, 실제로는 해당 라우트는 job 상태(status/progress/message)만 반환하고 요구사항을 반환하지 않는다. 요구사항은 `src/app/projects/[id]/page.tsx`의 `getProjectData`에서 `ORDER BY req."order"`로 이미 정렬되어 조회된다. 따라서 수정 불필요.
 
 ### 16.12 FK `ON DELETE CASCADE` 미설정 (성능/무결성 P1) 🔴
 
@@ -1494,12 +1494,12 @@ Worker가 동일 프로젝트 재분석 시 기존 `requirements`를 삭제하�
 
 | 항목 | 작업 | 완료 조건 | 상태 | §16 |
 |---|---|---|---|---|
-| 17.1 | 업로드 MIME + 크기 + `path.basename` 검증 | 비허용 파일 차단, 크기 초과 413 | 🔴 | 16.6 |
-| 17.2 | `dangerouslySetInnerHTML` 허용 태그 화이트리스트/sanitize | LLM·`ts_headline` 입력에 악의적 태그 미주입 | 🔴 | 16.8 |
-| 17.3 | 프로젝트 삭제 트랜잭션 + `uploads/` 파일 정리 | 중간 실패 시 롤백, 디스크 파일 정리 | 🔴 | 16.7 |
-| 17.4 | `/api/test` 보호 (제거 또는 인증 게이트) | 프로덕션에서 미인증 접근 차단 | 🔴 | 16.9 |
+| 17.1 | 업로드 MIME + 크기 + `path.basename` 검증 | 비허용 파일 차단, 크기 초과 413 | ✅ | 16.6 |
+| 17.2 | `dangerouslySetInnerHTML` 허용 태그 화이트리스트/sanitize | LLM·`ts_headline` 입력에 악의적 태그 미주입 | ✅ | 16.8 |
+| 17.3 | 프로젝트 삭제 트랜잭션 + `uploads/` 파일 정리 | 중간 실패 시 롤백, 디스크 파일 정리 | ✅ | 16.7 |
+| 17.4 | `/api/test` 보호 (제거 또는 인증 게이트) | 프로덕션에서 미인증 접근 차단 | ✅ | 16.9 |
 | 17.5 | 재분석 시 기존 `requirements` 비우기 | 재분석 후 잔재 요구사항 0건 | 🔴 | 16.10 |
-| 17.6 | `analyze-status` `ORDER BY` 명시 | 호출마다 행 순서 일정 | 🔴 | 16.11 |
+| 17.6 | `analyze-status` `ORDER BY` 명시 | 호출마다 행 순서 일정 | ✅ (실제 문제 아님) | 16.11 |
 | 17.7 | 추출 커버리지 개선 | 3개 테스트 PDF 평균 90% 이상 | ⚠️ | 16.1 |
 
 ### P1 (안정성 + 코드 품질)
