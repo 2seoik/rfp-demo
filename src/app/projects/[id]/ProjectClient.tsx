@@ -584,18 +584,18 @@ export default function ProjectClient({ data, autoAnalyze }: Props) {
                                 <div className="h-1.5 w-16 overflow-hidden rounded-full bg-gray-100">
                                   <div
                                     className={`h-full rounded-full transition-all ${
-                                      doc.overallSimilarity >= 20
+                                      doc.overallSimilarity >= 80
                                         ? "bg-gradient-to-r from-blue-400 to-green-400"
-                                        : doc.overallSimilarity >= 12
+                                        : doc.overallSimilarity >= 50
                                           ? "bg-gradient-to-r from-gray-300 to-blue-400"
                                           : "bg-gray-300"
                                     }`}
-                                    style={{ width: `${Math.min(doc.overallSimilarity * 4, 100)}%` }}
+                                    style={{ width: `${Math.min(doc.overallSimilarity, 100)}%` }}
                                   />
                                 </div>
                                 <span className={`text-xs font-bold ${
-                                  doc.overallSimilarity >= 20 ? "text-green-600" :
-                                  doc.overallSimilarity >= 12 ? "text-blue-600" : "text-gray-500"
+                                  doc.overallSimilarity >= 80 ? "text-green-600" :
+                                  doc.overallSimilarity >= 50 ? "text-blue-600" : "text-gray-500"
                                 }`}>
                                   {doc.overallSimilarity}%
                                 </span>
@@ -629,26 +629,26 @@ export default function ProjectClient({ data, autoAnalyze }: Props) {
                         <div className="h-2 w-24 overflow-hidden rounded-full bg-gray-100">
                           <div
                             className={`h-full rounded-full transition-all duration-700 ${
-                              doc.overallSimilarity >= 20
+                              doc.overallSimilarity >= 80
                                 ? "bg-gradient-to-r from-blue-400 to-green-400"
-                                : doc.overallSimilarity >= 12
+                                : doc.overallSimilarity >= 50
                                   ? "bg-gradient-to-r from-gray-300 to-blue-400"
                                   : "bg-gray-300"
                             }`}
-                            style={{ width: `${Math.min(doc.overallSimilarity * 4, 100)}%` }}
+                            style={{ width: `${Math.min(doc.overallSimilarity, 100)}%` }}
                           />
                         </div>
                         <span className={`text-sm font-bold ${
-                          doc.overallSimilarity >= 20 ? "text-green-600" :
-                          doc.overallSimilarity >= 12 ? "text-blue-600" : "text-gray-500"
+                          doc.overallSimilarity >= 80 ? "text-green-600" :
+                          doc.overallSimilarity >= 50 ? "text-blue-600" : "text-gray-500"
                         }`}>
                           {doc.overallSimilarity}%
                         </span>
                       </div>
                       {/* 모바일 점수 */}
                       <span className={`sm:hidden rounded-full px-2.5 py-1 text-xs font-bold ${
-                        doc.overallSimilarity >= 20 ? "bg-green-100 text-green-700" :
-                        doc.overallSimilarity >= 12 ? "bg-blue-100 text-blue-700" : "bg-gray-100 text-gray-500"
+                        doc.overallSimilarity >= 80 ? "bg-green-100 text-green-700" :
+                        doc.overallSimilarity >= 50 ? "bg-blue-100 text-blue-700" : "bg-gray-100 text-gray-500"
                       }`}>
                         {doc.overallSimilarity}%
                       </span>
