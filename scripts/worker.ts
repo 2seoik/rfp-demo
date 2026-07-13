@@ -100,12 +100,36 @@ function cleanDescription(blockText: string, id: string, name: string | null): s
     if (/^(합\s*계|산출정보)(?:\s|$)/i.test(t)) continue;
     // 다음 요구사항 헤더 누출 제거 ("요구사항 분류 ...", "요구사항 고유번호 ...")
     if (/^요구사항\s*(분류|고유번호)/i.test(t)) continue;
+    // 섹션 번호 누출 제거 ("2) 기능 요구사항", "3. 시스템 구성")
+    if (/^\d+[).]\s/i.test(t)) continue;
     // "정의 " 접두사 제거 (RFP 표 컬럼 헤더, 본문은 보존)
     let cleaned = t.replace(/^정의\s*/i, "");
     if (!cleaned) continue;
     cleanLines.push(cleaned);
   }
   text = cleanLines.join("\n");
+
+  // 6. 깨진 줄 이어붙이기 (pdf-parse가 표 셀 내 줄바꿈을 그대로 유지해 문장이 중간에 잘리는 문제)
+  // 이전 줄이 한글로 끝나고 종결 어미가 아니면 다음 줄과 붙인다.
+  text = (function reflow(t: string): string {
+    const ls = t.split("\n");
+    const out: string[] = [];
+    let buf = "";
+    const isSentenceEnd = /(?:함|한다|된다|것|해야|되어야|하여야|이어야|바람|필요|가능|보장|제공|지원|준수|실시|구성|적용|확인|유지|처리|관리|수행|대응|보호)$/;
+    for (const l of ls) {
+      const s = l.trim();
+      if (!s) continue;
+      if (!buf) { buf = s; continue; }
+      if (/[가-힣]$/.test(buf) && !isSentenceEnd.test(buf) && !/^\d+[).]/.test(s)) {
+        buf += s;
+      } else {
+        out.push(buf);
+        buf = s;
+      }
+    }
+    if (buf) out.push(buf);
+    return out.join("\n");
+  })(text);
 
   return text.slice(0, 1000);
 }
