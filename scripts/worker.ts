@@ -49,6 +49,46 @@ function diag(jobId: string, label: string, data: Record<string, any>) {
   console.log(`[${new Date().toISOString().slice(11, 19)}][w${workerId}][${jobId.slice(0, 8)}][DIAG] ${label} ${JSON.stringify(data)}`);
 }
 
+// ─── Description 정제 ────────────────────────────────────
+// LLM 없이 원문 블록 텍스트에서 요구사항 설명 부분만 추출한다.
+// ID 위치를 찾아 앞부분을 버리고, ID와 name(LLM 출력 명칭)을 제거한 뒤, 표 아티팩트를 정리한다.
+function escapeRegex(s: string): string {
+  return s.replace(/[-\/\\^$*+?.()|[\]{}]/g, "\\$&");
+}
+
+function cleanDescription(blockText: string, id: string, name: string | null): string {
+  let text = blockText;
+
+  // 1. ID 위치 찾고 앞부분(preamble) 버리기
+  const idRe = new RegExp(escapeRegex(id), "i");
+  const idMatch = text.match(idRe);
+  if (idMatch && idMatch.index !== undefined) {
+    text = text.slice(idMatch.index);
+  }
+
+  // 2. ID 문자열 제거 (대소문자 구분 없이)
+  text = text.replace(idRe, "");
+
+  // 3. 명칭(name) 제거 — ID 바로 다음 위치에서만. 설명 본문의 동일 단어는 보존.
+  if (name && name.length >= 2) {
+    const nameRe = new RegExp(
+      "^\\s*" + escapeRegex(name) + "(?:\\s*[·●•○]?)?",
+      ""
+    );
+    text = text.replace(nameRe, " ");
+  }
+
+  // 4. 표 아티팩트 정리
+  text = text
+    .replace(/[·●•○]\s*/g, "")    // 열 구분자
+    .replace(/\s{2,}/g, " ")        // 다중 공백 → 단일 공백
+    .replace(/^\s+/gm, "")          // 줄머리 공백
+    .replace(/\n{2,}/g, "\n")       // 연속 줄바꿈 → 하나
+    .trim();
+
+  return text.slice(0, 1000);
+}
+
 // ─── Job Progress Updater ──────────────────────────────────
 async function updateJob(jobId: string, updates: Partial<typeof jobs.$inferInsert>) {
   await db.update(jobs).set({ ...updates, updatedAt: new Date() }).where(eq(jobs.id, jobId));
@@ -489,7 +529,7 @@ async function handleRfpAnalyze(job: any) {
         const blockItem = batch.items.find((b: BatchItem) => b.expectedId === r.id.toUpperCase());
         resultByBlock.set(r.id.toUpperCase(), {
           success: true,
-          data: { id: r.id, name: r.name, sourceText: (r.description || blockItem?.text || "").slice(0, 1000) },
+          data: { id: r.id, name: r.name, sourceText: cleanDescription(blockItem?.text || "", r.id, r.name) },
         });
       }
 
@@ -551,7 +591,7 @@ async function handleRfpAnalyze(job: any) {
             const blockItem = batch.items.find((b: BatchItem) => b.expectedId === r.id.toUpperCase());
             resultByBlock.set(r.id.toUpperCase(), {
               success: true,
-              data: { id: r.id, name: r.name, sourceText: (r.description || blockItem?.text || "").slice(0, 1000) },
+              data: { id: r.id, name: r.name, sourceText: cleanDescription(blockItem?.text || "", r.id, r.name) },
             });
           }
           log(jobId, `    재시도 배치 ${bi + 1} (${retryModel}): ✅ ${reconciliation.valid.length}개 / ❌ ${reconciliation.missingIds.length}개`);
@@ -573,7 +613,7 @@ async function handleRfpAnalyze(job: any) {
         id,
         originalId: id,
         name: null,
-        sourceText: (blockItem?.text || "").slice(0, 1000),
+        sourceText: cleanDescription(blockItem?.text || "", id, null),
         type: "general",
         priority: "essential",
         _rawOnly: true,

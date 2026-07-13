@@ -1403,8 +1403,7 @@ API 및 Worker 로그에 API 키, 전체 문서 원문, 개인정보를 노출�
 3. 청크 크기를 2500자로 축소
 4. 요구사항 ID를 정규식으로 먼저 탐색한 뒤 ID별 범위를 LLM에 전달 ✅ (M1-C 구현)
 5. 고품질 모델로 변경 (OpenAI `gpt-4o-mini` 추천, §3.2 참고)
-6. ✅ 2026-07-13: LLM 프롬프트 간소화 — `type`·`priority` 추출 제거, `name` + `description`(원문발췌)에 집중. `source_text`를 원문 블록 텍스트 대신 LLM이 추출한 `description`으로 채운다. 태스크 단순화로 누락 감소 기대. 실패 시 원문 블록 텍스트로 fallback.
-   - `schema.ts`: `priority` DB 기본값 `"medium"` → `"essential"` 수정 (실제 사용값과 불일치 해소).
+6. ✅ 2026-07-13: LLM 프롬프트 영문화 + name 전용 (type/priority/description 제거). `source_text`는 더 이상 LLM·원문 블록이 아닌 **코드 정제**(`cleanDescription`: ID·name 제거 + 표 아티팩트 정리)로 생성. 태스크 단순화로 추출 속도 회복, description은 결정적(deterministic)이고 비용 없음. 80% 정확도 목표, 나머지 20%는 사람 확인.
 
 ### 16.2 DOCX 처리 불일치 ✅
 

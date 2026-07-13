@@ -143,24 +143,23 @@ export async function enrichBatch(
   const startMs = Date.now();
 
   const systemPrompt = [
-    "RFP 요구사항 ID와 원문을 받아 각 요구사항의 name과 description을 JSON으로 반환하세요.",
-    '출력: {"requirements":[{"id":"ECR-001","name":"요구사항 명칭","description":"원문에서 요구사항의 상세 설명만 발췌한 텍스트"}]}',
+    "You are an RFP requirement parser. Given requirement IDs with their original text blocks, extract only the name for each ID.",
+    'Output: {"requirements":[{"id":"ECR-001","name":"System Construction"}]}',
     "",
-    "규칙:",
-    "- 입력으로 받은 모든 ID에 대해 정확히 하나의 결과를 반환한다.",
-    "- ID 문자열을 수정하지 않는다.",
-    "- 입력에 없는 ID를 생성하지 않는다.",
-    "- name: 해당 요구사항을 대표하는 짧은 명칭 (10자 내외).",
-    "- description: 원문에서 요구사항 ID, 명칭, 표 머리글을 제외한 순수 상세 설명만 그대로 발췌한다. 요약하거나 재작성하지 않는다.",
-    "- 판단할 수 없는 값은 null로 반환한다.",
-    "- JSON 외의 설명이나 마크다운을 출력하지 않는다.",
+    "Rules:",
+    "- Return exactly one result per input ID.",
+    "- Do not modify the ID string.",
+    "- Do not generate IDs not in the input.",
+    "- name: a concise title (under 10 words) representing the requirement. Prefer the heading text next to the ID.",
+    "- Return null for name if uncertain.",
+    "- Output ONLY valid JSON. No markdown, no code fences, no explanation.",
   ].join("\n");
 
   const inputText = input.requirements
     .map((r) => `--- ID: ${r.id} ---\n${r.text.slice(0, 1500)}`)
     .join("\n\n");
 
-  const userContent = `입력 ID: ${input.requirements.map((r) => r.id).join(", ")}\n\n${inputText}\n\n각 ID에 대해 name(명칭)과 description(상세내용)을 JSON으로 반환하세요:`;
+  const userContent = `IDs: ${input.requirements.map((r) => r.id).join(", ")}\n\n${inputText}\n\nJSON:`;
 
   try {
     const res = await client.chat.completions.create(
@@ -213,7 +212,7 @@ export async function enrichBatch(
         name: r.name || null,
         type: r.type || null,
         priority: r.priority || null,
-        description: r.description || null,
+        description: null,
       })),
       usage,
     };
