@@ -656,7 +656,11 @@ export default function ProjectClient({ data, autoAnalyze }: Props) {
                   </div>
 
                   {/* 설명 (항상 표시) */}
-                  <p className="mt-2 text-sm text-gray-500">{doc.explanation}</p>
+                  <div className="mt-2 rounded-lg bg-blue-50/50 px-3 py-2">
+                    <p className="text-sm text-gray-700 leading-relaxed">
+                      <span className="mr-1.5">📊</span>{doc.explanation}
+                    </p>
+                  </div>
 
                   {/* 요약 배지 (항상 표시) */}
                   <div className="mt-2 flex flex-wrap items-center gap-2">
@@ -680,9 +684,6 @@ export default function ProjectClient({ data, autoAnalyze }: Props) {
                         ID {doc.breakdown.idOverlap}%
                       </span>
                     )}
-                    <span className="text-xs text-gray-400">
-                      클릭하여 상세 보기
-                    </span>
                   </div>
 
                   {/* 확장: 상세 내용 */}
