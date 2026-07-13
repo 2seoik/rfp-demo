@@ -1063,22 +1063,49 @@ STUCK_JOB_TIMEOUT = 10분
 
 ## 10. LLM 프롬프트 요구사항
 
-시스템 프롬프트는 다음을 명시해야 한다.
+### 10.1 프롬프트 (2026-07-13 현재)
 
-- 입력은 한국어 RFP 문서 일부다.
-- 청크에 포함된 모든 요구사항을 빠짐없이 추출한다.
-- 원문에 없는 ID를 생성하지 않는다.
-- ID가 없는 설명, 목차, 분류명은 요구사항으로 추출하지 않는다.
-- 동일 요구사항이 반복돼도 하나만 반환한다.
-- 결과는 지정된 JSON 스키마만 반환한다.
-- JSON 바깥의 설명과 Markdown 코드 블록을 금지한다.
+LLM은 **name만 추출**한다. type, priority, description은 LLM에서 추출하지 않는다.
 
-권장 추가 지시:
-
-```text
-청크에 요구사항이 10개 있으면 반드시 10개 모두 반환해야 한다.
-첫 몇 개만 요약하거나 대표 항목만 선택하지 마라.
 ```
+System: You are an RFP requirement parser. Given requirement IDs with their
+original text blocks, extract only the name for each ID.
+Output: {"requirements":[{"id":"ECR-001","name":"System Construction"}]}
+
+Rules:
+- Return exactly one result per input ID.
+- Do not modify the ID string.
+- Do not generate IDs not in the input.
+- name: a concise title (under 10 words) representing the requirement.
+  Prefer the heading text next to the ID.
+- Return null for name if uncertain.
+- Output ONLY valid JSON. No markdown, no code fences, no explanation.
+```
+
+### 10.2 source_text 생성: cleanDescription 파이프라인 (6단계)
+
+`source_text`는 LLM이 아닌 `cleanDescription()` 함수가 **결정적으로** 생성한다.
+
+| 단계 | 내용 |
+|---|---|
+| 1 | ID 위치 찾고 앞부분(preamble) 버리기 |
+| 2 | ID 문자열 제거 (대소문자 무관) |
+| 3 | "요구사항 명칭 [name]" 패턴 제거 (RFP 템플릿 접두사 포함) |
+| 4 | 표 아티팩트 정리 (·●•○, 다중 공백, 연속 줄바꿈) |
+| 5 | RFP 보일러플레이트 행 제거 (요구사항, 세부내용, 정의, 산출정보, 페이지 번호, 합계, 섹션 번호) |
+| 6 | `reflowLines`: 깨진 줄 이어붙이기 (pdf-parse 표 셀 줄바꿈 복원). 양쪽 25자 이상이면 붙이지 않음 |
+
+### 10.3 프론트엔드 렌더링
+
+- 매트릭스: `whitespace-pre-line` + `line-clamp-2` (줄바꿈 보존, 2줄 제한)
+- 상세 패널: `split('\n')` + 각 줄 앞에 "•" 불릿 + `pt-3` 여백
+
+### 10.4 설계 의도
+
+- LLM 태스크를 name 추출로 최소화 → 속도 향상, 할루시네이션 위험 감소
+- description은 결정적(deterministic) 코드 정제 → 비용 0, 항상 결과 반환, 할루시네이션 없음
+- 80% 정확도 목표, 나머지 20%는 사람이 매트릭스에서 확인
+- type/priority/confidence-color는 LLM 모델 변경·고도화 후 도입 검토
 
 프롬프트 변경은 테스트 PDF 3종에 대한 회귀 테스트 후 반영한다.
 
@@ -1086,21 +1113,20 @@ STUCK_JOB_TIMEOUT = 10분
 
 ## 11. 유사 RFP 검색 명세
 
-### 11.1 현재 구현
+> 현재 구현 상세는 §7.7을 참고한다. 본 절은 설계 의도와 제약을 기술한다.
 
-PostgreSQL Full-Text Search를 사용한다.
+### 11.1 현재 구현 요약
 
-```sql
-to_tsvector('simple', document_chunks.content)
-@@ plainto_tsquery('simple', :query)
-```
-
-점수는 `ts_rank()`를 사용하고 문서 단위로 집계한다.
+2계층 FTS (PostgreSQL `to_tsvector`):
+- 1계층: `documents.header_text` 매칭 → 전체 유사도(overallSimilarity)
+- 2계층: `requirements.source_text` 요구사항별 페어 매칭 → 근거 표시
+- RFP 템플릿 보일러플레이트를 제거한 후 검색한다 (`STOPWORDS`, `stripBoilerplate`).
 
 ### 11.2 검색 제약
 
 - 동일 조직 문서만 검색한다.
 - 현재 프로젝트 문서는 제외한다.
+- `document_chunks`/pgvector 하이브리드 검색은 미구현 (`EMBEDDING_API_URL` 미설정, `document_chunks` 비어 있음).
 - `documents.type = 'rfp'`만 대상으로 한다.
 - 내용이 비어 있는 청크는 제외한다.
 - 반환 건수는 기본 5~10개로 제한한다.
@@ -1384,26 +1410,25 @@ API 및 Worker 로그에 API 키, 전체 문서 원문, 개인정보를 노출�
 
 > 상태 표시: ✅ 해결됨 / ⚠️ 부분 개선 / 🔴 잔존 (2026-07-13 코드 검토 기준)
 
-### 16.1 요구사항 추출 커버리지 불안정 ⚠️
+### 16.1 요구사항 추출 커버리지 불안정 ⚠️ → name 안정화, description 80%
 
-현재 테스트 결과:
+현재 테스트 결과 (39개 ID RFP, kimi-k2.6, 6회 연속 분석):
 
-| 모델 | 결과 | 특성 |
-|---|---:|---|
-| `deepseek-v4-flash` | 59/59 | 정확하지만 느림 |
-| `kimi-k2.6` | 59/59 | 정확, 17초/호출 × 59 = ~17분 (현재 운영 모델) |
-| `minimax-m2.7` | 17/59 | 빠르지만 누락이 많음 (현재 `.env` 기본값, 호출 시 content 미반환 이슈) |
+| 지표 | 이전 | 현재 |
+|---|---|---|
+| name(명칭) 추출률 | 0~100% 불안정 | **39/39 (100%)** |
+| description 보일러플레이트 | 심각 (페이지 번호, 표 헤더, 다음 요구사항 섞임) | **0~1건/39** (블록 경계 이슈) |
+| description 읽기 품질 | 거의 불가 | **80% 양호**, 20% 사람 확인 필요 |
 
-근본 원인은 `minimax-m2.7`이 한 청크에 여러 요구사항이 있어도 일부만 반환하는 경향이다. **ID 경계 블록 분할 + 배치 동시 호출로 부분 개선됨** (M1-C, M2). 모델 교체 없이는 완전 해결이 어렵다.
+개선 조치 (2026-07-13):
 
-우선 개선 순서:
+1. ✅ ID 경계 블록 분할 + 배치 동시 호출 (M1-C, M2)
+2. ✅ LLM 프롬프트 영문화 + name 전용 → 추출 안정화
+3. ✅ `cleanDescription` 6단계 파이프라인: ID·name·보일러플레이트 제거 + `reflowLines` 깨진 줄 복원 (§10.2)
+4. ✅ 프론트엔드: `whitespace-pre-line` + "•" 불릿 렌더링 (§10.3)
+5. 🔴 고품질 모델 (gpt-4o-mini) 교체 — 미적용, 현재 kimi-k2.6으로 100% name 추출 중
 
-1. 프롬프트에 전체 추출 의무 강화 (M2에서 1회 재시도로 부분 반영)
-2. `max_tokens`를 8192로 증가
-3. 청크 크기를 2500자로 축소
-4. 요구사항 ID를 정규식으로 먼저 탐색한 뒤 ID별 범위를 LLM에 전달 ✅ (M1-C 구현)
-5. 고품질 모델로 변경 (OpenAI `gpt-4o-mini` 추천, §3.2 참고)
-6. ✅ 2026-07-13: LLM 프롬프트 영문화 + name 전용 (type/priority/description 제거). `source_text`는 더 이상 LLM·원문 블록이 아닌 **코드 정제**(`cleanDescription`: ID·name 제거 + 표 아티팩트 정리)로 생성. 태스크 단순화로 추출 속도 회복, description은 결정적(deterministic)이고 비용 없음. 80% 정확도 목표, 나머지 20%는 사람 확인.
+`source_text`는 더 이상 LLM이나 원문 블록이 아닌 **결정적 코드 정제**로 생성된다. type/priority는 LLM에서 추출하지 않고 DB 기본값(`technical`/`essential`)을 사용한다. 모델 교체 시 신뢰할 수 있는 type/priority/description 추출을 재검토한다.
 
 ### 16.2 DOCX 처리 불일치 ✅
 

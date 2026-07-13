@@ -495,7 +495,7 @@ export default function ProjectClient({ data, autoAnalyze }: Props) {
                 )}
                 <div className="mt-3 rounded-lg bg-gray-50 p-3 text-sm text-gray-700 max-h-48 overflow-y-auto">
                   {selected.source_text.split('\n').map((line, i) => (
-                    <div key={i} className="flex gap-1.5">
+                    <div key={i} className="flex gap-1.5 pt-3">
                       <span className="text-gray-300 shrink-0 select-none">•</span>
                       <span>{line}</span>
                     </div>
