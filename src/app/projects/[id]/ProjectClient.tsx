@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useRef } from "react";
+import { useState, useEffect, useRef, useMemo } from "react";
 import { useRouter } from "next/navigation";
 
 // ts_headline 등에서 생성된 HTML에서 <mark>~</mark> 리터럴만 허용하고
@@ -100,6 +100,33 @@ export default function ProjectClient({ data, autoAnalyze }: Props) {
   const [selectedReq, setSelectedReq] = useState<string | null>(
     requirements.length > 0 ? requirements[0].id : null
   );
+  // 매트릭스 정렬 (rfp-pipeline-spec.md §16.18)
+  const [sortBy, setSortBy] = useState<"order" | "original_id" | "name" | "type">("order");
+  const [sortDir, setSortDir] = useState<"asc" | "desc">("asc");
+  const handleSort = (key: typeof sortBy) => {
+    if (sortBy === key) {
+      setSortDir((d) => (d === "asc" ? "desc" : "asc"));
+    } else {
+      setSortBy(key);
+      setSortDir("asc");
+    }
+  };
+  const sortedRequirements = useMemo(() => {
+    const list = [...requirements];
+    const dir = sortDir === "asc" ? 1 : -1;
+    list.sort((a, b) => {
+      let av: string | number;
+      let bv: string | number;
+      if (sortBy === "order") { av = a.order; bv = b.order; }
+      else if (sortBy === "name") { av = a.name ?? ""; bv = b.name ?? ""; }
+      else if (sortBy === "type") { av = a.type ?? ""; bv = b.type ?? ""; }
+      else { av = a.original_id ?? ""; bv = b.original_id ?? ""; }
+      if (av < bv) return -1 * dir;
+      if (av > bv) return 1 * dir;
+      return 0;
+    });
+    return list;
+  }, [requirements, sortBy, sortDir]);
 
   // Analysis progress state
   // autoAnalyze: 업로드 직후 진입 시 true (폴링 즉시 시작)
@@ -259,8 +286,9 @@ export default function ProjectClient({ data, autoAnalyze }: Props) {
             <button
               onClick={handleCancelAnalysis}
               className="text-sm text-gray-500 hover:text-gray-700 underline"
+              title="분석은 백그라운드에서 계속 진행됩니다"
             >
-              취소하고 대시보드로
+              대시보드로 이동
             </button>
           </div>
 
@@ -396,13 +424,43 @@ export default function ProjectClient({ data, autoAnalyze }: Props) {
               <table className="w-full text-left text-sm">
                 <thead className="border-b bg-gray-50">
                   <tr>
-                    <th className="px-4 py-3 font-medium text-gray-600 w-24">ID</th>
-                    <th className="px-4 py-3 font-medium text-gray-600">요구사항</th>
-                    <th className="px-4 py-3 font-medium text-gray-600 w-20">유형</th>
+                    <th className="px-4 py-3 font-medium text-gray-600 w-24">
+                      <button
+                        type="button"
+                        onClick={() => handleSort("original_id")}
+                        className="flex items-center gap-1 hover:text-blue-600"
+                        aria-sort={sortBy === "original_id" ? (sortDir === "asc" ? "ascending" : "descending") : "none"}
+                      >
+                        ID
+                        {sortBy === "original_id" && <span aria-hidden="true">{sortDir === "asc" ? "▲" : "▼"}</span>}
+                      </button>
+                    </th>
+                    <th className="px-4 py-3 font-medium text-gray-600">
+                      <button
+                        type="button"
+                        onClick={() => handleSort("name")}
+                        className="flex items-center gap-1 hover:text-blue-600"
+                        aria-sort={sortBy === "name" ? (sortDir === "asc" ? "ascending" : "descending") : "none"}
+                      >
+                        요구사항
+                        {sortBy === "name" && <span aria-hidden="true">{sortDir === "asc" ? "▲" : "▼"}</span>}
+                      </button>
+                    </th>
+                    <th className="px-4 py-3 font-medium text-gray-600 w-20">
+                      <button
+                        type="button"
+                        onClick={() => handleSort("type")}
+                        className="flex items-center gap-1 hover:text-blue-600"
+                        aria-sort={sortBy === "type" ? (sortDir === "asc" ? "ascending" : "descending") : "none"}
+                      >
+                        유형
+                        {sortBy === "type" && <span aria-hidden="true">{sortDir === "asc" ? "▲" : "▼"}</span>}
+                      </button>
+                    </th>
                   </tr>
                 </thead>
                 <tbody className="divide-y">
-                  {requirements.map((req) => (
+                  {sortedRequirements.map((req) => (
                     <tr key={req.id} onClick={() => setSelectedReq(req.id)}
                       className={`cursor-pointer transition hover:bg-blue-50 ${selectedReq === req.id ? "bg-blue-50" : ""}`}>
                       <td className="px-4 py-3 align-top">
