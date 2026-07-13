@@ -89,7 +89,7 @@ export const requirements = pgTable("requirements", {
   name: text("name"), // RFP 원문의 요구사항 명칭 (예: 시스템 아키텍처 설계)
   sourceText: text("source_text").notNull(),
   type: text("type").notNull().default("general"), // 'general' | 'qualification' | 'security' | 'operation' | 'format'
-  priority: text("priority").notNull().default("medium"), // 'essential' | 'recommended' | 'optional'
+  priority: text("priority").notNull().default("essential"), // 'essential' | 'recommended' | 'optional'
   status: text("status").notNull().default("pending"), // 'pending' | 'in_progress' | 'answered' | 'confirmed'
   assignee: text("assignee"), // user id (2단계)
   order: integer("order"),

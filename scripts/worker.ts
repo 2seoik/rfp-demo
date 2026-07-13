@@ -489,7 +489,7 @@ async function handleRfpAnalyze(job: any) {
         const blockItem = batch.items.find((b: BatchItem) => b.expectedId === r.id.toUpperCase());
         resultByBlock.set(r.id.toUpperCase(), {
           success: true,
-          data: { id: r.id, name: r.name, type: r.type, priority: r.priority, sourceText: (blockItem?.text || "").slice(0, 1000) },
+          data: { id: r.id, name: r.name, sourceText: (r.description || blockItem?.text || "").slice(0, 1000) },
         });
       }
 
@@ -551,7 +551,7 @@ async function handleRfpAnalyze(job: any) {
             const blockItem = batch.items.find((b: BatchItem) => b.expectedId === r.id.toUpperCase());
             resultByBlock.set(r.id.toUpperCase(), {
               success: true,
-              data: { id: r.id, name: r.name, type: r.type, priority: r.priority, sourceText: (blockItem?.text || "").slice(0, 1000) },
+              data: { id: r.id, name: r.name, sourceText: (r.description || blockItem?.text || "").slice(0, 1000) },
             });
           }
           log(jobId, `    재시도 배치 ${bi + 1} (${retryModel}): ✅ ${reconciliation.valid.length}개 / ❌ ${reconciliation.missingIds.length}개`);
