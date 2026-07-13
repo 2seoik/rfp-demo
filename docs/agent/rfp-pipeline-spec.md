@@ -1,8 +1,10 @@
 # RFP Demo 기술 명세서
 
 > AI 기반 RFP(Request For Proposal) 문서 분석 플랫폼의 구현·운영 기준을 정의한다. 이 문서는 신규 개발자와 AI 에이전트가 별도 설명 없이 프로젝트 구조를 이해하고 기능을 수정하거나 확장할 수 있도록 작성되었다.
+>
+> 이 문서는 프로젝트의 단일 진실 공급원(single source of truth)이다. 최신 코드 검토 결과와 우선순위 매트릭스는 `docs/agent/code-review-2026-07-13.md`를 참고한다. §16(알려진 문제)과 §17(개선 우선순위)은 검토 보고서와 매핑되며, 작업 완료 시 상태(✅/⚠️/🔴)를 갱신한다.
 
-- 기준 문서 갱신일: 2026-07-10
+- 기준 문서 갱신일: 2026-07-13
 - 패키지 매니저: `pnpm`
 - 런타임 구성: Next.js 애플리케이션 + 독립 Worker + PostgreSQL
 
@@ -110,6 +112,41 @@ LLM_MODEL="minimax-m2.7"
 ```
 
 현재 모델은 응답 속도는 빠르지만 한국어 RFP 요구사항 추출 커버리지가 낮다. 운영 품질 기준을 충족하려면 모델 교체 또는 추출 파이프라인 개선이 필요하다.
+
+### 3.2 LLM 모델 선정 이력
+
+> 2026-07-10~11 기준 OpenCode 게이트웨이에서 테스트한 결과. 새 모델 도입 시 이 표를 기준으로 회귀 테스트한다.
+
+#### 벤치마크 (3000자 한국어 RFP excerpt, JSON 추출, 30초 timeout)
+
+| 모델 | 응답시간 | reasoning | 요구사항수 | 평가 |
+|---|---:|---:|---:|---|
+| `minimax-m2.7` | 6.4초 | 0 | 3/3 | 속도 우수, 커버리지 낮음 |
+| `minimax-m2.5` | 6.6초 | 0 | 3/3 | 속도 우수 |
+| `glm-5.2` | 13.0초 | 1,618 | 3/3 | 안정 |
+| `kimi-k2.6` | 25.2초 | 9,838 | 3/3 | 정확하지만 느림 (현재 운영 모델) |
+| `deepseek-v4-flash` | 40~50초 | 16,811 | 39/59 | reasoning 토큰 과다, `max_tokens=16384` 필요 |
+| `qwen3.7-plus` | timeout | — | — | 게이트웨이 응답 없음 |
+| `mimo-v2.5` | — | — | 0/3 | `content: null` (폐기) |
+
+#### 실제 추출 커버리지 (59개 ID 테스트 PDF)
+
+| 모델 | 커버리지 | 특성 |
+|---|---:|---|
+| `deepseek-v4-flash` | 59/59 (100%) | 정확하지만 40~50초/호출 |
+| `kimi-k2.6` | 59/59 (100%) | 정확, 17초/호출 → 59호출 시 ~17분 |
+| `minimax-m2.7` | 17/59 (28.8%) | 빠르지만 누락 다수 |
+
+#### 모델별 알려진 이슈
+
+- `minimax-m2.7`: 한 청크에 여러 요구사항이 있어도 일부만 반환하는 경향. ID 경계 분할 + 배치 처리로 부분 완화.
+- `deepseek-v4-flash`: reasoning 토큰이 출력을 잠식해 `max_tokens` 초과. `max_tokens=16384` 또는 reasoning 제어 필요.
+- `glm-5.2`: 간헐 timeout.
+- `qwen3.7-plus`: OpenCode 게이트웨이에서 응답 없음.
+
+#### 권장
+
+OpenAI `gpt-4o-mini` 키 확보 시 속도(3~5초)와 품질(50~59개)을 동시 확보 가능. `.env`의 `LLM_MODEL`과 `LLM_API_BASE`만 변경하면 된다.
 
 ---
 
@@ -561,34 +598,83 @@ Job이 없으면 다음 형태를 사용한다.
 
 현재 프로젝트 요구사항과 같은 조직의 다른 RFP 문서를 비교해 유사 문서를 반환한다.
 
-#### 검색 절차
+#### 검색 절차 (현재 구현: 2계층 FTS)
 
-1. 현재 프로젝트의 `requirements.source_text`를 결합한다.
-2. 불용어를 제거하고 검색 키워드를 구성한다.
-3. 다른 프로젝트의 `document_chunks.content`에 `to_tsvector()` 검색을 수행한다.
-4. `ts_rank()`로 청크 점수를 계산한다.
-5. 문서별 평균 또는 가중 평균 점수로 그룹화한다.
-6. 현재 프로젝트의 문서는 결과에서 제외한다.
+구현 파일: `src/app/api/projects/[id]/similar/route.ts`
 
-#### 권장 Response
+**1계층 - 문서 수준 (사업개요, 종합 유사도의 1차 신호)**
+
+1. 현재 프로젝트 RFP 문서의 `documents.header_text`에서 키워드를 추출한다 (불용어 + RFP 템플릿 보일러플레이트 라벨 제거, 최대 15개).
+2. 동일 조직의 다른 프로젝트 `documents.header_text`에 `to_tsquery('simple', ...)` 검색을 수행한다.
+3. `ts_rank() * 500`을 반올림해 `headerScore`를 산출한다. 이 값이 종합 유사도(`overallSimilarity`)가 된다.
+4. `ts_headline()`으로 매칭 구문을 `<mark>`로 하이라이트한다.
+
+**2계층 - 요구사항 수준 (근거/설명용)**
+
+5. 현재 프로젝트 각 `requirements.source_text`에서 키워드를 추출해 요구사항별 OR `tsquery`를 구성한다.
+6. 다른 프로젝트의 `requirements.source_text`에 검색해 `contentPairs`(페어 매핑)를 만든다. 매칭된 고유 source 요구사항 수 / 전체를 `contentSimilarity`로 산출한다.
+7. 동일 `original_id`를 가진 요구사항 쌍은 `idPairs`로 별도 수집해 템플릿 공유 지표(`idOverlap`)로 사용한다.
+8. 결과를 타겟 프로젝트별로 그룹화하고 `overallSimilarity`(= `headerSimilarity`) 내림차순으로 정렬한다.
+9. 현재 프로젝트는 결과에서 제외한다.
+
+#### 점수 체계
+
+| 신호 | 값 | 역할 |
+|---|---|---|
+| `overallSimilarity` | `headerSimilarity` | 정렬 기준 (1차 신호) |
+| `headerSimilarity` | `ts_rank * 500` (반올림) | 문서 수준 유사도 |
+| `contentSimilarity` | 매칭 source 요구사항 수 / 전체 (%) | 근거/설명 |
+| `idOverlap` | 동일 `original_id` 수 / 전체 (%) | 템플릿 공유 지표 |
+
+`overallSimilarity`가 문서 수준 점수 하나로 결정되는 것은 의도적이다. 요구사항 키워드 매칭은 보일러플레이트에 의해 왜곡되기 쉬워 1차 신호로 부적절하고, 사업개요(header)가 RFP의 본질적 유사도를 더 잘 반영한다.
+
+#### 보일러플레이트 제거
+
+`STOPWORDS`와 `stripBoilerplate()` 정규식이 RFP 템플릿 라벨("요구사항 분류", "고유번호", "산출정보", "응락수준" 등)을 제거한다. 이는 템플릿 보일러플레이트가 검색 결과를 지배하는 것을 막기 위함이다.
+
+#### 초기 설계 (미구현, 참고용)
+
+초기 설계는 `document_chunks.content` 기반 하이브리드 검색(FTS + pgvector)이었으나, 임베딩 파이프라인(`EMBEDDING_API_URL`)이 설정되지 않아 `document_chunks` 테이블이 비어 있다. `src/lib/search.ts`의 `hybridSearch`는 미사용(dead code)이며, 현재는 위 2계층 FTS만 운용된다. 임베딩 도입 시 이 설계를 재검토한다.
+
+#### 응답 (Response)
 
 ```json
-[
-  {
-    "documentId": "uuid",
-    "documentName": "유사 RFP.pdf",
-    "projectId": "uuid",
-    "projectName": "유사 프로젝트",
-    "similarity": 82,
-    "matches": [
-      {
-        "chunkId": "uuid",
-        "content": "매칭된 문서 내용...",
-        "score": 0.82
-      }
-    ]
-  }
-]
+{
+  "sourceProject": { "name": "", "bizName": "", "period": "", "docName": "", "reqCount": 0, "topType": "" },
+  "similar": [
+    {
+      "projectId": "uuid",
+      "projectName": "유사 프로젝트",
+      "overallSimilarity": 82,
+      "headerSimilarity": 82,
+      "headerMatchText": "<mark>...</mark>",
+      "bizName": "",
+      "period": "",
+      "docName": "유사 RFP.pdf",
+      "reqCount": 59,
+      "matchedPairs": [
+        {
+          "sourceId": "uuid",
+          "sourceOriginalId": "FN-001",
+          "sourceName": "",
+          "targetId": "uuid",
+          "targetOriginalId": "FN-001",
+          "targetName": "",
+          "targetText": "",
+          "targetHeadline": "<mark>...</mark>",
+          "matchType": "content",
+          "score": 42
+        }
+      ],
+      "idMatchCount": 30,
+      "contentMatchCount": 50,
+      "breakdown": { "headerSimilarity": 82, "idOverlap": 50, "contentSimilarity": 84 },
+      "explanation": "유사 프로젝트은(는) 사업개요 기준 매우 유사한 프로젝트입니다 (문서 유사도 82%). ..."
+    }
+  ],
+  "sourceReqCount": 59,
+  "keywords": ["..."]
+}
 ```
 
 ---
@@ -1192,12 +1278,16 @@ API 및 Worker 로그에 API 키, 전체 문서 원문, 개인정보를 노출�
 ### 14.4 보안
 
 - 업로드 파일 확장자와 MIME 타입을 검증한다.
-- 업로드 경로 traversal을 방지한다.
+- 업로드 시 파일명은 `path.basename()`으로 정규화해 경로 traversal을 방지한다.
+- 최대 업로드 크기를 설정한다 (`next.config.ts`의 `bodySizeLimit` 또는 업로드 라우트에서 명시적 크기 검증).
 - 원본 파일명은 표시용으로만 사용하고 실제 저장명과 분리한다.
-- 최대 업로드 크기를 설정한다.
-- SQL은 매개변수화한다.
-- API 키는 서버/Worker에서만 사용한다.
-- 향후 인증 도입 시 모든 프로젝트 조회와 수정에 조직 범위 검증을 적용한다.
+- SQL은 매개변수화한다 (Drizzle `sql` 템플릿).
+- API 키는 서버/Worker에서만 사용한다 (`.env`는 git 추적 제외).
+- `dangerouslySetInnerHTML`은 신뢰할 수 없는 출처의 HTML을 주입하지 않는다. LLM이 생성한 텍스트나 사용자 입력을 그대로 넣지 않으며, 허용 태그 화이트리스트를 둔다.
+- 인증 도입 전이라도 모든 프로젝트 조회/수정/삭제/유사검색에 조직 범위(`org_id`) 검증을 적용한다. 다중 조직 환경에서는 한 조직의 RFP가 다른 조직에 노출되지 않아야 한다.
+- 디버그/테스트 전용 엔드포인트(예: `/api/test`)는 프로덕션 빌드에서 제외하거나 인증 게이트를 둔다.
+- 하드코딩된 DB 연결 문자열/자격 증명은 `.env`로 이동한다 (스크립트 포함).
+- API 오류 응답에 내부 스택이나 SQL, 파일 경로를 노출하지 않는다.
 
 ---
 
@@ -1292,56 +1382,149 @@ API 및 Worker 로그에 API 키, 전체 문서 원문, 개인정보를 노출�
 
 ## 16. 현재 알려진 문제
 
-### 16.1 요구사항 추출 커버리지 불안정
+> 상태 표시: ✅ 해결됨 / ⚠️ 부분 개선 / 🔴 잔존 (2026-07-13 코드 검토 기준)
+
+### 16.1 요구사항 추출 커버리지 불안정 ⚠️
 
 현재 테스트 결과:
 
 | 모델 | 결과 | 특성 |
 |---|---:|---|
 | `deepseek-v4-flash` | 59/59 | 정확하지만 느림 |
-| `minimax-m2.7` | 17/59 | 빠르지만 누락이 많음 |
+| `kimi-k2.6` | 59/59 | 정확, 17초/호출 × 59 = ~17분 (현재 운영 모델) |
+| `minimax-m2.7` | 17/59 | 빠르지만 누락이 많음 (현재 `.env` 기본값, 호출 시 content 미반환 이슈) |
 
-근본 원인은 `minimax-m2.7`이 한 청크에 여러 요구사항이 있어도 일부만 반환하는 경향이다.
+근본 원인은 `minimax-m2.7`이 한 청크에 여러 요구사항이 있어도 일부만 반환하는 경향이다. **ID 경계 블록 분할 + 배치 동시 호출로 부분 개선됨** (M1-C, M2). 모델 교체 없이는 완전 해결이 어렵다.
 
 우선 개선 순서:
 
-1. 프롬프트에 전체 추출 의무 강화
+1. 프롬프트에 전체 추출 의무 강화 (M2에서 1회 재시도로 부분 반영)
 2. `max_tokens`를 8192로 증가
 3. 청크 크기를 2500자로 축소
-4. 요구사항 ID를 정규식으로 먼저 탐색한 뒤 ID별 범위를 LLM에 전달
-5. 고품질 모델로 변경
+4. 요구사항 ID를 정규식으로 먼저 탐색한 뒤 ID별 범위를 LLM에 전달 ✅ (M1-C 구현)
+5. 고품질 모델로 변경 (OpenAI `gpt-4o-mini` 추천, §3.2 참고)
 
-### 16.2 DOCX 처리 불일치
+### 16.2 DOCX 처리 불일치 ✅
 
-업로드 API는 DOCX를 허용하지만 Worker가 PDF 파서만 사용하면 런타임 실패가 발생한다. 확장자별 파서 분기 구현 전에는 DOCX 허용을 제거하거나 명확히 비활성화해야 한다.
+Worker에 `mammoth` 기반 DOCX 파서 분기가 구현되었다. 업로드 API가 DOCX를 허술하면 확장자별 파서가 정상 동작한다. (원래 항목: 업로드 API는 DOCX를 허용하지만 Worker가 PDF 파서만 사용하면 런타임 실패가 발생한다.)
 
-### 16.3 사업기간 추출 간헐 실패
+### 16.3 사업기간 추출 간헐 실패 ✅
 
-LLM 호출 실패를 무시하므로 `period`가 비어 있을 수 있다. 정규식/키워드 fallback을 먼저 적용하고 LLM은 보조 수단으로 사용한다.
+정규식/키워드 fallback이 Worker에 구현되었다. LLM 호출 실패 시에도 `period`를 정규식으로 회복한다. (원래 항목: LLM 호출 실패를 무시하므로 `period`가 비어 있을 수 있다.)
 
-### 16.4 모든 청크 실패 시 0건 성공 처리
+### 16.4 모든 청크 실패 시 0건 성공 처리 ✅
 
-모든 청크 실패와 실제 요구사항 없음은 구분되어야 한다. 성공한 청크 수가 0이면 Job을 failed로 처리한다.
+Worker가 성공한 청크 수가 0이면 Job을 `failed`로 처리한다. (원래 항목: 모든 청크 실패와 실제 요구사항 없음은 구분되어야 한다.)
 
-### 16.5 Worker 중단 시 processing Job 고착
+### 16.5 Worker 중단 시 processing Job 고착 ✅
 
-stuck Job 복구 로직이 없으면 수동 SQL이 필요하다. Worker 시작 시 자동 복구를 구현한다.
+Worker 시작 시 `recoverStuckJobs()`로 `processing` 상태 Job을 `pending`으로 복구한다. (원래 항목: stuck Job 복구 로직이 없으면 수동 SQL이 필요하다.)
+
+### 16.6 업로드 검증 미흡 (보안 P0) 🔴
+
+`src/app/api/upload/route.ts`는 파일 확장자만 검증하고 MIME 타입과 최대 크기를 검증하지 않는다. 또한 원본 파일명을 그대로 사용해 경로 traversal 위험이 있다. `next.config.ts`에 `bodySizeLimit`도 설정되어 있지 않다.
+
+- MIME 타입 검증, `path.basename()` 정규화, 명시적 크기 제한을 추가한다.
+
+### 16.7 프로젝트 삭제 시 트랜잭션 + 파일 정리 누락 (데이터 무결성 P0) 🔴
+
+`DELETE /api/projects/[id]`는 테이블별 DELETE 쿼리를 순서대로 실행하지만 `db.transaction()`으로 래핑하지 않는다. 중간 실패 시 부분 삭제 상태가 된다. 또한 `uploads/` 디렉토리의 원본 파일을 정리하지 않는다.
+
+- 전체 DELETE를 트랜잭션으로 래핑하고, 성공 후 디스크 파일을 정리한다.
+
+### 16.8 `dangerouslySetInnerHTML` HTML 주입 위험 (보안 P0) 🔴
+
+`src/app/projects/[id]/ProjectClient.tsx`(라인 620–625, 660–665)이 `dangerouslySetInnerHTML`로 LLM이 생성한 텍스트/하이라이트 HTML을 직접 주입한다. `similar/route.ts`의 `ts_headline` 결과(`<mark>` 포함)도 이 경로로 들어온다. 허용 태그 화이트리스트 또는 살균(sanitize)이 필요하다.
+
+### 16.9 `/api/test` 보호 없음 (보안 P0) 🔴
+
+`src/app/api/test/route.ts`는 디버그용 엔드포인트로 인증이나 조직 범위 검증 없이 프로덕션에 노출된다. 프로덕션 빌드에서 제외하거나 인증 게이트를 둔다.
+
+### 16.10 재분석 시 기존 요구사항 미삭제 (데이터 무결성 P0) 🔴
+
+Worker가 동일 프로젝트 재분석 시 기존 `requirements`를 삭제하지 않는다. `UNIQUE(project_id, original_id)` 제약과 SELECT-before-INSERT로 중복 INSERT는 막히지만, 이전 분석의 잔재 요구사항이 섞일 수 있다. 재분석 시작 시 동일 `project_id`의 `requirements`를 먼저 비운다.
+
+### 16.11 `analyze-status` 정렬 미지정 (데이터 무결성 P0) 🔴
+
+`GET /api/projects/[id]/analyze-status`가 `ORDER BY` 없이 요구사항을 반환한다. PostgreSQL은 정렬 미지정 시 순서를 보장하지 않으므로, 프론트 매트릭스 행 순서가 호출마다 달라질 수 있다. `ORDER BY "order"` 또는 `ORDER BY original_id`를 명시한다.
+
+### 16.12 FK `ON DELETE CASCADE` 미설정 (성능/무결성 P1) 🔴
+
+`src/db/schema.ts`의 외래키가 `ON DELETE` 동작을 명시하지 않는다. 삭제 시 테이블마다 수동 DELETE를 실행해야 한다. `CASCADE`를 설정하면 삭제 코드가 단순해지고 누락 위험이 줄어든다. 마이그레이션 검증 후 적용한다.
+
+### 16.13 미사용(Dead) 분석 파이프라인 (코드 품질 P1) 🔴
+
+4개의 분석/검색 파이프라인이 공존하지만 운영은 Worker 1곳만 사용한다:
+
+- `scripts/worker.ts` — 운영 (ID 경계 분할 + 배치 동시 호출)
+- `src/app/api/projects/[id]/analyze/route.ts` — SSE 기반 동기 분석 (미사용)
+- `src/lib/services/rfp-analysis.ts` — 별도 분석 서비스 (미사용)
+- `src/lib/services/document-processor.ts` — 청크 생성 (미사용)
+- `src/lib/search.ts` `hybridSearch` — pgvector 하이브리드 검색 (미사용, `document_chunks` 비어 있음)
+
+미사용 코드는 제거 또는 `deprecated` 표시한다. 임베딩 파이프라인 재도입 시 분리 브랜치에서 복원한다.
+
+### 16.14 설정 페이지 미작동 (UX/기능 P1) 🔴
+
+`/settings` 페이지는 기본값만 표시하고 저장 로직이 없다. 모델 목록이 `src/lib/provider.ts`의 `MODEL_CONFIG`와 불일치한다. 저장 API 연결 또는 페이지 제거를 검토한다.
+
+### 16.15 환경변수 기본값 분산 (코드 품질 P1) 🔴
+
+`src/lib/provider.ts`와 `src/lib/env.ts`가 각각 별도의 기본값을 갖는다. 단일 진실 공급원(single source of truth)으로 통일한다.
+
+### 16.16 유사 검색 GIN 인덱스 미설정 (성능 P1) 🔴
+
+`requirements.source_text`와 `documents.header_text`에 `to_tsvector` 기반 FTS를 수행하지만 GIN 인덱스가 없다. 데이터 증가 시 성능 저하가 발생한다.
+
+### 16.17 미연결 서비스 (기능 P2) 🔴
+
+`src/lib/services/export.ts`(내보내기)와 `src/lib/services/answer-recommendation.ts`(응답 추천)은 구현되어 있으나 UI 호출 지점이 없다.
+
+### 16.18 매트릭스 정렬/필터 부재, 모바일 삭제 접근성 (UX P2) 🔴
+
+요구사항 매트릭스에 정렬/필터가 없고, 대시보드 삭제 버튼이 모바일에서 접근성이 떨어진다. 스크린 리더 라벨과 포커스 링도 보강한다.
 
 ---
 
 ## 17. 개선 우선순위
 
-| 우선순위 | 작업 | 완료 조건 |
-|---|---|---|
-| P0 | 추출 커버리지 개선 | 3개 테스트 PDF 평균 90% 이상 |
-| P0 | 모든 청크 실패 처리 | 0건 성공 오판 제거 |
-| P0 | stuck Job 복구 | Worker 재시작 후 자동 재처리 |
-| P1 | DOCX 파서 분기 | DOCX 통합 테스트 통과 |
-| P1 | 사업기간 fallback | 대표 기간 형식 테스트 통과 |
-| P1 | 업로드 보안 강화 | MIME, 크기, 경로 검증 |
-| P2 | 벡터 검색 | FTS 대비 검색 품질 비교 |
-| P2 | Worker pool | 다중 Job 병렬 처리 검증 |
-| P2 | 타입 정리 | 주요 API/컴포넌트의 `any` 제거 |
+> 2026-07-13 코드 검토 기준. §16 항목과 매핑. ✅ 완료 / 🔴 잔존.
+
+### P0 (보안 + 데이터 무결성, 즉시)
+
+| 항목 | 작업 | 완료 조건 | 상태 | §16 |
+|---|---|---|---|---|
+| 17.1 | 업로드 MIME + 크기 + `path.basename` 검증 | 비허용 파일 차단, 크기 초과 413 | 🔴 | 16.6 |
+| 17.2 | `dangerouslySetInnerHTML` 허용 태그 화이트리스트/sanitize | LLM·`ts_headline` 입력에 악의적 태그 미주입 | 🔴 | 16.8 |
+| 17.3 | 프로젝트 삭제 트랜잭션 + `uploads/` 파일 정리 | 중간 실패 시 롤백, 디스크 파일 정리 | 🔴 | 16.7 |
+| 17.4 | `/api/test` 보호 (제거 또는 인증 게이트) | 프로덕션에서 미인증 접근 차단 | 🔴 | 16.9 |
+| 17.5 | 재분석 시 기존 `requirements` 비우기 | 재분석 후 잔재 요구사항 0건 | 🔴 | 16.10 |
+| 17.6 | `analyze-status` `ORDER BY` 명시 | 호출마다 행 순서 일정 | 🔴 | 16.11 |
+| 17.7 | 추출 커버리지 개선 | 3개 테스트 PDF 평균 90% 이상 | ⚠️ | 16.1 |
+
+### P1 (안정성 + 코드 품질)
+
+| 항목 | 작업 | 완료 조건 | 상태 | §16 |
+|---|---|---|---|---|
+| 17.8 | FK `ON DELETE CASCADE` + 일괄 INSERT | 단일 DELETE로 전파, INSERT 배치 | 🔴 | 16.12 |
+| 17.9 | 미사용 분석 파이프라인 제거/표시 | dead code 4건 정리 | 🔴 | 16.13 |
+| 17.10 | 설정 페이지 저장 로직 또는 제거 | 설정 변경이 `.env`/Worker에 반영 또는 페이지 제거 | 🔴 | 16.14 |
+| 17.11 | 환경변수 기본값 단일 진실 공급원 통일 | `provider.ts`/`env.ts` 불일치 제거 | 🔴 | 16.15 |
+| 17.12 | 유사 검색 GIN 인덱스 | FTS 쿼리 실행계획에 Index Scan | 🔴 | 16.16 |
+| 17.13 | 모든 청크 실패 처리 | 0건 성공 오판 제거 | ✅ | 16.4 |
+| 17.14 | stuck Job 복구 | Worker 재시작 후 자동 재처리 | ✅ | 16.5 |
+| 17.15 | DOCX 파서 분기 | DOCX 통합 테스트 통과 | ✅ | 16.2 |
+| 17.16 | 사업기간 fallback | 대표 기간 형식 테스트 통과 | ✅ | 16.3 |
+
+### P2 (기능 완성 + UX)
+
+| 항목 | 작업 | 완료 조건 | 상태 | §16 |
+|---|---|---|---|---|
+| 17.17 | 미연결 서비스 UI 연결 (export/answer-recommendation) | UI에서 내보내기/응답 추천 호출 가능 | 🔴 | 16.17 |
+| 17.18 | 매트릭스 정렬/필터, 모바일 삭제 버튼 a11y | 정렬/필터 동작, 스크린 리더 라벨/포커스 | 🔴 | 16.18 |
+| 17.19 | 벡터 검색 | FTS 대비 검색 품질 비교 | 🔴 | — |
+| 17.20 | Worker pool | 다중 Job 병렬 처리 검증 | 🔴 | — |
+| 17.21 | 타입 정리 | 주요 API/컴포넌트의 `any` 제거 | 🔴 | — |
 
 ---
 
