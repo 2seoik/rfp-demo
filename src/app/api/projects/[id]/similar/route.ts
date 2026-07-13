@@ -199,6 +199,19 @@ export async function GET(
       }
     }
 
+    // ── 자기 자신과의 ts_rank 계산 (정규화 기준점, 동일 문서 = 100%) ──
+    let headerSelfScore = 0;
+    if (headerKwStr && (currentDoc as any).header_text) {
+      const selfRow = (await db.execute(sql`
+        SELECT ts_rank(
+          to_tsvector('simple', ${(currentDoc as any).header_text}),
+          to_tsquery('simple', ${headerKwStr})
+        )::numeric AS self_rank
+      `)).rows ?? [];
+      const selfRankRaw = Number((selfRow[0] as any)?.self_rank || 0);
+      headerSelfScore = Math.round(selfRankRaw * 500);
+    }
+
     // ── 4b. 요구사항별 tsquery VALUES 절 구성 ──
     let contentPairsQuery;
     if (hasSourceQueries) {
@@ -295,7 +308,7 @@ export async function GET(
       projectGroups[pid] = {
         projectId: pid,
         projectName: hr.target_project_name,
-        headerScore: Number(hr.header_score),
+        headerScore: headerSelfScore > 0 ? Math.min(100, Math.round(Number(hr.header_score) / headerSelfScore * 100)) : Number(hr.header_score),
         headerHeadline: hr.header_headline || "",
         idPairs: [],
         contentPairs: [],
@@ -383,15 +396,15 @@ export async function GET(
         // 설명 조립 (사업개요 = 1차 신호, 요구사항 = 근거)
         let explanation = "";
         const hdrLabel =
-          headerSimilarity >= 30
+          headerSimilarity >= 80
             ? "매우 유사한"
-            : headerSimilarity >= 15
+            : headerSimilarity >= 50
               ? "유사한"
               : headerSimilarity > 0
                 ? "일부 유사한"
                 : "유사하지 않은";
 
-        if (headerSimilarity >= 20) {
+        if (headerSimilarity >= 60) {
           explanation = `${g.projectName}은(는) 사업개요 기준 ${hdrLabel} 프로젝트입니다 (문서 유사도 ${headerSimilarity}%).`;
         } else if (headerSimilarity > 0) {
           explanation = `${g.projectName}은(는) 사업개요가 일부 유사합니다 (${headerSimilarity}%).`;
