@@ -210,6 +210,10 @@ export default function ProjectClient({ data, autoAnalyze }: Props) {
           setSourceProject(data.sourceProject ?? null);
           setSimilarDocs(data.similar ?? []);
           setSimilarSearched(true);
+          // 첫 번째 유사 문서 자동 펼침
+          if (data.similar?.length > 0) {
+            setExpandedCards((prev) => ({ ...prev, [data.similar[0].projectId]: true }));
+          }
         })
         .catch((err) => {
           setSimilarError(err.message);
@@ -243,36 +247,40 @@ export default function ProjectClient({ data, autoAnalyze }: Props) {
   return (
     <div className="mx-auto max-w-7xl p-6">
       {/* Header */}
-      <div className="mb-6 flex items-start justify-between">
-        <div>
-          <h1 className="text-2xl font-bold">{project.name}</h1>
-          {(project as any).biz_name && (
-            <p className="mt-0.5 text-sm text-gray-500">{ (project as any).biz_name}</p>
+      <div className="mb-6">
+        <div className="flex items-start justify-between">
+          <div>
+            <h1 className="text-2xl font-bold">{project.name}</h1>
+            {(project as any).biz_name && (
+              <p className="mt-1 text-sm text-gray-500">{(project as any).biz_name}</p>
+            )}
+          </div>
+          {!analyzing && (
+            <button
+              onClick={() => setShowDeleteConfirm(true)}
+              className="rounded-lg border border-red-200 px-3 py-1.5 text-sm text-red-600 hover:bg-red-50 transition"
+            >
+              삭제
+            </button>
+          )}
+        </div>
+        {/* Stats bar */}
+        <div className="mt-3 flex flex-wrap items-center gap-4 text-sm text-gray-500">
+          {project.period && (
+            <span className="inline-flex items-center gap-1.5">
+              <span className="text-gray-300">📅</span>{project.period}
+            </span>
           )}
           {data.documents.length > 0 && (
-            <p className="mt-1 text-sm text-gray-500 flex items-center gap-1">
-              <span>{data.documents[0].name}</span>
-            </p>
+            <span className="inline-flex items-center gap-1.5">
+              <span className="text-gray-300">📄</span>{data.documents[0].name}
+            </span>
           )}
-          {project.period && (
-            <p className="mt-0.5 text-sm text-gray-500 flex items-center gap-1">
-              <span>사업기간: {project.period}</span>
-            </p>
-          )}
-          <p className="mt-1 text-sm text-gray-500">
-            {analyzing
-              ? "RFP 분석 중..."
-              : `RFP 분석 결과 · 요구사항 ${requirements.length}개 추출`}
-          </p>
+          <span className="inline-flex items-center gap-1.5">
+            <span className="text-gray-300">📋</span>
+            {analyzing ? "분석 중..." : `요구사항 ${requirements.length}개`}
+          </span>
         </div>
-        {!analyzing && (
-          <button
-            onClick={() => setShowDeleteConfirm(true)}
-            className="rounded-lg border border-red-200 px-3 py-1.5 text-sm text-red-600 hover:bg-red-50 transition"
-          >
-            삭제
-          </button>
-        )}
       </div>
 
       {/* ── 분석 진행 오버레이 ─────────────────────────── */}
@@ -385,10 +393,14 @@ export default function ProjectClient({ data, autoAnalyze }: Props) {
             <button onClick={() => setActiveTab("matrix")}
               className={`pb-3 text-sm font-medium transition ${activeTab === "matrix" ? "border-b-2 border-blue-600 text-blue-600" : "text-gray-500 hover:text-gray-700"}`}>
               요구사항 매트릭스
+              <span className="ml-1.5 rounded-full bg-gray-100 px-2 py-0.5 text-xs text-gray-500">{requirements.length}</span>
             </button>
             <button onClick={() => { setActiveTab("similar"); }}
               className={`pb-3 text-sm font-medium transition ${activeTab === "similar" ? "border-b-2 border-blue-600 text-blue-600" : "text-gray-500 hover:text-gray-700"}`}>
               유사 RFP 검색
+              {similarDocs.length > 0 && (
+                <span className="ml-1.5 rounded-full bg-gray-100 px-2 py-0.5 text-xs text-gray-500">{similarDocs.length}</span>
+              )}
             </button>
           </nav>
         </div>
@@ -619,7 +631,12 @@ export default function ProjectClient({ data, autoAnalyze }: Props) {
                     <div className="flex items-center gap-3">
                       <span className="text-lg">{isExpanded ? "▾" : "▸"}</span>
                       <div>
-                        <h3 className="font-bold text-gray-900">{doc.projectName}</h3>
+                        <h3 className="font-bold text-gray-900">
+                          {doc.projectName}
+                          {doc.overallSimilarity >= 100 && (
+                            <span className="ml-2 inline-flex items-center rounded-full bg-green-100 px-2 py-0.5 text-xs font-medium text-green-700 align-middle">동일 문서</span>
+                          )}
+                        </h3>
                         <p className="text-xs text-gray-400">{doc.bizName || doc.docName}</p>
                       </div>
                     </div>
