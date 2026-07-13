@@ -412,7 +412,6 @@ export default function ProjectClient({ data, autoAnalyze }: Props) {
           <div className="flex-1">
             {/* 요약 바 */}
             <div className="mb-3 flex flex-wrap items-center gap-2 text-xs">
-              <span className="font-medium text-gray-500">총 {requirements.length}건</span>
               {(() => {
                 const dist: Record<string, number> = {};
                 requirements.forEach((r) => { dist[r.type] = (dist[r.type] || 0) + 1; });
@@ -422,21 +421,12 @@ export default function ProjectClient({ data, autoAnalyze }: Props) {
                   </span>
                 ));
               })()}
-              {(() => {
-                const pri: Record<string, number> = {};
-                requirements.forEach((r) => { pri[r.priority] = (pri[r.priority] || 0) + 1; });
-                return Object.entries(pri).sort((a, b) => b[1] - a[1]).map(([p, c]) => (
-                  <span key={p} className={`rounded-full px-2 py-0.5 text-xs font-medium ${PRIORITY_BADGES[p]?.class ?? ""}`}>
-                    {PRIORITY_BADGES[p]?.label ?? p} {c}
-                  </span>
-                ));
-              })()}
             </div>
             <div className="overflow-hidden rounded-xl border border-gray-200 bg-white">
               <table className="w-full text-left text-sm">
                 <thead className="border-b bg-gray-50">
                   <tr>
-                    <th className="px-4 py-3 font-medium text-gray-600 w-24">
+                    <th className="px-4 py-3 font-medium text-gray-600 w-20">
                       <button
                         type="button"
                         onClick={() => handleSort("original_id")}
@@ -519,14 +509,6 @@ export default function ProjectClient({ data, autoAnalyze }: Props) {
                   <span className={`rounded-full px-2 py-0.5 text-xs font-medium ${CONFIDENCE_BADGES[selected.confidence_label ?? ""]?.class ?? "bg-gray-100 text-gray-600"}`}>
                     {CONFIDENCE_BADGES[selected.confidence_label ?? ""]?.label ?? "분석 전"}
                   </span>
-                </div>
-                <div className="mt-4 border-t pt-4">
-                  <h4 className="mb-2 text-sm font-medium text-gray-700">추천 답변</h4>
-                  {selected.draft_text ? (
-                    <div className="rounded-lg bg-gray-50 p-3 text-sm text-gray-700 whitespace-pre-line">{selected.draft_text}</div>
-                  ) : (
-                    <div className="rounded-lg bg-red-50 p-3 text-sm text-red-600">아직 분석되지 않았습니다.</div>
-                  )}
                 </div>
               </div>
             </div>
