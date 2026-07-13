@@ -72,7 +72,7 @@ function cleanDescription(blockText: string, id: string, name: string | null): s
   // 3. 명칭(name) 제거 — "요구사항 명칭 [name]" 패턴도 함께 제거 (RFP 템플릿 접두사)
   if (name && name.length >= 2) {
     const nameRe = new RegExp(
-      "^(?:요구사항\\s*명칭\\s*)?" + escapeRegex(name) + "(?:\\s*[·●•○]?)?",
+      "^\\s*(?:요구사항\\s*명칭\\s*)?" + escapeRegex(name) + "(?:\\s*[·●•○]?)?",
       ""
     );
     text = text.replace(nameRe, " ");
