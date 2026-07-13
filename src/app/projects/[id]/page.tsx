@@ -27,10 +27,26 @@ type ProjectData = {
 async function getProjectData(id: string): Promise<ProjectData | null> {
   try {
     const [project] = (await db.execute(sql`
-      SELECT * FROM projects WHERE id = ${id}::uuid LIMIT 1
+      SELECT p.*, d2.header_text
+      FROM projects p
+      LEFT JOIN documents d2 ON d2.project_id = p.id AND d2.type = 'rfp'
+      WHERE p.id = ${id}::uuid
+      LIMIT 1
     `)).rows ?? [];
 
     if (!project) return null;
+
+    // 사업명 추출
+    const ht = (project as any).header_text || "";
+    let bizName = "";
+    const m = /(?:사\s*업\s*명|사업명)\s*[:：]?\s*(.+?)(?:\n|$)/gi.exec(ht);
+    if (m) {
+      const c = m[1].trim();
+      if (c.length >= 5 && !/^[·.\s\d]+$/.test(c)) {
+        bizName = c.replace(/\t/g, "").replace(/\s{2,}/g, " ");
+      }
+    }
+    (project as any).biz_name = bizName;
 
     const reqs = (await db.execute(sql`
       SELECT

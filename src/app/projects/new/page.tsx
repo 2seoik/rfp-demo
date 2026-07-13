@@ -32,7 +32,7 @@ export default function NewProjectPage() {
     setError("");
 
     try {
-      setUploadStatus("📄 파일 업로드 중...");
+      setUploadStatus("파일 업로드 중...");
       const formData = new FormData();
       formData.append("file", file);
       formData.append("name", name);
@@ -49,7 +49,7 @@ export default function NewProjectPage() {
 
       const data = await res.json();
 
-      setUploadStatus("✅ 업로드 완료! 분석 페이지로 이동합니다...");
+      setUploadStatus("업로드 완료! 분석 페이지로 이동합니다...");
 
       // 분석 페이지로 이동 (프로젝트 페이지에서 자동으로 SSE 분석 시작)
       setTimeout(() => {
@@ -160,7 +160,7 @@ export default function NewProjectPage() {
         {/* 에러 메시지 */}
         {error && (
           <div className="rounded-lg bg-red-50 p-4 text-sm text-red-700">
-            ❌ {error}
+            {error}
           </div>
         )}
 

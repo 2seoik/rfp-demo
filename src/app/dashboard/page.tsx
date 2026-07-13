@@ -10,22 +10,38 @@ type Project = {
   requirement_count: number;
   document_count: number;
   updated_at: string;
+  biz_name: string | null;
+  period: string | null;
 };
 
 async function getProjects(): Promise<Project[]> {
   try {
     const rows = (await db.execute(sql`
       SELECT
-        p.id, p.name, p.status, p.updated_at,
+        p.id, p.name, p.status, p.period, p.updated_at,
         COUNT(DISTINCT r.id)::int AS requirement_count,
-        COUNT(DISTINCT d.id)::int AS document_count
+        COUNT(DISTINCT d.id)::int AS document_count,
+        (SELECT d2.header_text FROM documents d2
+         WHERE d2.project_id = p.id AND d2.type = 'rfp' LIMIT 1) AS header_text
       FROM projects p
       LEFT JOIN requirements r ON r.project_id = p.id
       LEFT JOIN documents d ON d.project_id = p.id
       GROUP BY p.id
       ORDER BY p.updated_at DESC
     `)).rows ?? [];
-    return rows as Project[];
+
+    return (rows as any[]).map((r) => {
+      const ht = r.header_text || "";
+      let bizName: string | null = null;
+      const m = /(?:사\s*업\s*명|사업명)\s*[:：]?\s*(.+?)(?:\n|$)/gi.exec(ht);
+      if (m) {
+        const c = m[1].trim();
+        if (c.length >= 5 && !/^[·.\s\d]+$/.test(c)) {
+          bizName = c.replace(/\t/g, "").replace(/\s{2,}/g, " ");
+        }
+      }
+      return { ...r, biz_name: bizName };
+    }) as Project[];
   } catch {
     return [];
   }
@@ -68,6 +84,12 @@ export default async function DashboardPage() {
               <div key={project.id} className="group relative rounded-xl border border-gray-200 bg-white shadow-sm transition hover:shadow-md hover:border-blue-300">
                 <Link href={`/projects/${project.id}`} className="block p-5">
                   <h3 className="font-semibold text-gray-900 group-hover:text-blue-600">{project.name}</h3>
+                  {project.biz_name && (
+                    <p className="mt-0.5 text-xs text-gray-400 truncate">{project.biz_name}</p>
+                  )}
+                  {project.period && (
+                    <p className="mt-0.5 text-xs text-gray-400">{project.period}</p>
+                  )}
                   <div className="mt-3 flex items-center gap-3 text-sm text-gray-500">
                     <span className={`inline-flex items-center rounded-full px-2 py-0.5 text-xs font-medium ${statusInfo.class}`}>
                       {statusInfo.label}

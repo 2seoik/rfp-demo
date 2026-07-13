@@ -9,6 +9,7 @@ type DocRow = {
   parsed_status: string;
   created_at: string;
   chunk_count: number;
+  project_name: string | null;
 };
 
 async function getDocuments(): Promise<DocRow[]> {
@@ -20,10 +21,12 @@ async function getDocuments(): Promise<DocRow[]> {
         d.type,
         d.parsed_status,
         d.created_at,
-        COUNT(dc.id)::int AS chunk_count
+        COUNT(dc.id)::int AS chunk_count,
+        p.name AS project_name
       FROM documents d
       LEFT JOIN document_chunks dc ON dc.document_id = d.id
-      GROUP BY d.id
+      LEFT JOIN projects p ON p.id = d.project_id
+      GROUP BY d.id, p.name
       ORDER BY d.created_at DESC
     `)).rows ?? [];
     return rows as DocRow[];
@@ -64,9 +67,9 @@ export default async function LibraryPage() {
             <thead className="border-b bg-gray-50">
               <tr>
                 <th className="px-4 py-3 font-medium text-gray-600">파일명</th>
+                <th className="px-4 py-3 font-medium text-gray-600">프로젝트</th>
                 <th className="px-4 py-3 font-medium text-gray-600">유형</th>
                 <th className="px-4 py-3 font-medium text-gray-600">상태</th>
-                <th className="px-4 py-3 font-medium text-gray-600">청크</th>
                 <th className="px-4 py-3 font-medium text-gray-600">업로드일</th>
               </tr>
             </thead>
@@ -77,12 +80,15 @@ export default async function LibraryPage() {
                     {doc.name}
                   </td>
                   <td className="px-4 py-3 text-gray-600">
+                    {doc.project_name || "-"}
+                  </td>
+                  <td className="px-4 py-3 text-gray-600">
                     {TYPE_LABELS[doc.type] ?? doc.type}
                   </td>
                   <td className="px-4 py-3">
                     {doc.parsed_status === "ready" ? (
                       <span className="inline-flex items-center rounded-full bg-green-100 px-2 py-0.5 text-xs font-medium text-green-700">
-                        ✅ 분석 완료
+                        분석 완료
                       </span>
                     ) : doc.parsed_status === "parsing" ? (
                       <span className="inline-flex items-center rounded-full bg-yellow-100 px-2 py-0.5 text-xs font-medium text-yellow-700">
@@ -90,7 +96,7 @@ export default async function LibraryPage() {
                       </span>
                     ) : doc.parsed_status === "error" ? (
                       <span className="inline-flex items-center rounded-full bg-red-100 px-2 py-0.5 text-xs font-medium text-red-700">
-                        ❌ 오류
+                        오류
                       </span>
                     ) : (
                       <span className="inline-flex items-center rounded-full bg-gray-100 px-2 py-0.5 text-xs font-medium text-gray-600">
@@ -98,7 +104,6 @@ export default async function LibraryPage() {
                       </span>
                     )}
                   </td>
-                  <td className="px-4 py-3 text-gray-500">{doc.chunk_count}</td>
                   <td className="px-4 py-3 text-gray-500">
                     {doc.created_at
                       ? new Date(doc.created_at).toLocaleDateString("ko-KR")
