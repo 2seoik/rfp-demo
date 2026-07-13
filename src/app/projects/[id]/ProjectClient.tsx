@@ -472,7 +472,6 @@ export default function ProjectClient({ data, autoAnalyze }: Props) {
                         <p className="font-medium text-gray-900">
                           {req.name || req.original_id || `요구사항 #${req.order}`}
                         </p>
-                        <p className="mt-0.5 text-xs text-gray-500 line-clamp-2 whitespace-pre-line">{req.source_text}</p>
                       </td>
                       <td className="px-4 py-3 align-top">
                         <span className="text-xs text-gray-500">{TYPE_LABELS[req.type] ?? req.type}</span>
@@ -700,18 +699,6 @@ export default function ProjectClient({ data, autoAnalyze }: Props) {
                         </div>
                       </div>
 
-                      {/* 헤더 매칭 스니펫 */}
-                      {doc.headerMatchText && (
-                        <div className="rounded-lg border border-purple-100 bg-purple-50/30 p-3">
-                          <p className="text-xs text-purple-600 mb-1 font-medium">문서 개요 매칭</p>
-                          <div
-                            className="text-sm text-gray-700 leading-relaxed"
-                            dangerouslySetInnerHTML={{
-                              __html: sanitizeMarkHtml(doc.headerMatchText),
-                            }}
-                          />
-                        </div>
-                      )}
 
                       {/* 매칭 페어 리스트 */}
                       {doc.matchedPairs.length > 0 && (
