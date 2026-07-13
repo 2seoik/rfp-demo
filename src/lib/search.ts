@@ -1,3 +1,7 @@
+// TODO: revisit at scale — 현재 document_chunks 테이블이 비어 있고(EMBEDDING_API_URL 미설정),
+// 유사 RFP 검색은 requirements.source_text 직접 FTS(route.ts)로 동작 중.
+// 프로젝트 수 증가 + 임베딩 API 확보 후 pgvector 하이브리드 검색으로 전환 검토.
+
 import { db } from "@/db";
 import { getEmbedding } from "./llm";
 import { sql } from "drizzle-orm";

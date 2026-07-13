@@ -55,6 +55,7 @@ export const documents = pgTable("documents", {
   name: text("name").notNull(),
   fileUrl: text("file_url").notNull(),
   parsedStatus: text("parsed_status").notNull().default("pending"), // 'pending' | 'parsing' | 'ready' | 'error'
+  headerText: text("header_text"), // 문서 앞부분 2,000자 — 사업개요/목표/목적 (유사 RFP 문서수준 비교용)
   createdAt: timestamp("created_at").defaultNow().notNull(),
 });
 

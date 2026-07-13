@@ -18,12 +18,43 @@ type Requirement = {
   citations: any[];
 };
 
+type MatchedPair = {
+  sourceId: string;
+  sourceOriginalId: string | null;
+  sourceName: string | null;
+  targetId: string;
+  targetOriginalId: string | null;
+  targetName: string | null;
+  targetText: string;
+  targetHeadline: string;
+  matchType: "id" | "content";
+  score: number;
+};
+
 type SimilarDoc = {
-  docId: string;
+  projectId: string;
+  projectName: string;
+  overallSimilarity: number;
+  headerSimilarity: number;
+  headerMatchText: string;
+  bizName: string;
+  period: string;
   docName: string;
-  avgScore: number;
-  matchCount: number;
-  chunks: { content: string; page: number | null; score: number }[];
+  reqCount: number;
+  matchedPairs: MatchedPair[];
+  idMatchCount: number;
+  contentMatchCount: number;
+  breakdown: { headerSimilarity: number; idOverlap: number; contentSimilarity: number };
+  explanation: string;
+};
+
+type SourceProjectInfo = {
+  name: string;
+  bizName: string;
+  period: string;
+  docName: string;
+  reqCount: number;
+  topType: string;
 };
 
 type Props = {
@@ -75,6 +106,7 @@ export default function ProjectClient({ data, autoAnalyze }: Props) {
 
   // Similar RFP state
   const [similarDocs, setSimilarDocs] = useState<SimilarDoc[]>([]);
+  const [sourceProject, setSourceProject] = useState<SourceProjectInfo | null>(null);
   const [similarLoading, setSimilarLoading] = useState(false);
   const [similarSearched, setSimilarSearched] = useState(false);
   const [similarError, setSimilarError] = useState("");
@@ -135,6 +167,7 @@ export default function ProjectClient({ data, autoAnalyze }: Props) {
           return res.json();
         })
         .then((data) => {
+          setSourceProject(data.sourceProject ?? null);
           setSimilarDocs(data.similar ?? []);
           setSimilarSearched(true);
         })
@@ -422,26 +455,192 @@ export default function ProjectClient({ data, autoAnalyze }: Props) {
               </p>
             </div>
           ) : (
-            <div className="space-y-4">
-              <p className="text-sm text-gray-500">요구사항을 기준으로 유사한 RFP 문서를 검색한 결과입니다.</p>
-              {similarDocs.map((doc) => (
-                <div key={doc.docId} className="rounded-xl border border-gray-200 bg-white p-5">
-                  <div className="flex items-center justify-between">
-                    <h3 className="font-semibold text-gray-900">📄 {doc.docName}</h3>
-                    <span className="rounded-full bg-blue-100 px-3 py-1 text-xs font-medium text-blue-700">
-                      유사도 {doc.avgScore}% · {doc.matchCount}개 매칭
-                    </span>
+            <div className="space-y-6">
+              {/* 현재 프로젝트 기준 정보 */}
+              {sourceProject && (
+                <div className="rounded-xl border border-blue-200 bg-blue-50/50 p-4">
+                  <p className="text-xs font-medium text-blue-600 mb-2">📋 현재 프로젝트 기준</p>
+                  <div className="grid grid-cols-2 gap-x-6 gap-y-1 text-sm">
+                    <div>
+                      <span className="text-gray-400">사업명</span>
+                      <p className="text-gray-800 font-medium truncate">
+                        {sourceProject.bizName || sourceProject.name}
+                      </p>
+                    </div>
+                    <div>
+                      <span className="text-gray-400">파일</span>
+                      <p className="text-gray-800 truncate">{sourceProject.docName}</p>
+                    </div>
+                    {sourceProject.period && (
+                      <div>
+                        <span className="text-gray-400">사업기간</span>
+                        <p className="text-gray-800">{sourceProject.period}</p>
+                      </div>
+                    )}
+                    <div>
+                      <span className="text-gray-400">요구사항</span>
+                      <p className="text-gray-800">
+                        {sourceProject.reqCount}건
+                        {sourceProject.topType && (
+                          <span className="text-gray-400 text-xs"> · 주로 {sourceProject.topType}</span>
+                        )}
+                      </p>
+                    </div>
                   </div>
-                  <div className="mt-3 space-y-2">
-                    {doc.chunks.slice(0, 3).map((chunk, i) => (
-                      <div key={i} className="rounded-lg bg-gray-50 p-3 text-sm text-gray-600">
-                        <p className="line-clamp-2">{chunk.content}</p>
-                        <div className="mt-1 flex gap-2 text-xs text-gray-400">
-                          {chunk.page && <span>페이지 {chunk.page}</span>}
-                          <span>매칭 {chunk.score}%</span>
+                </div>
+              )}
+
+              <p className="text-sm text-gray-500">요구사항 및 문서 개요를 기준으로 비교한 유사 RFP 검색 결과입니다.</p>
+              {similarDocs.map((doc) => (
+                <div key={doc.projectId} className="rounded-xl border border-gray-200 bg-white p-5">
+                  {/* 헤더: 프로젝트명 + 유사도 */}
+                  <div className="flex items-center justify-between">
+                    <h3 className="text-lg font-bold text-gray-900">📄 {doc.projectName}</h3>
+                    <div className="flex items-center gap-2">
+                      <span className={`rounded-full px-3 py-1 text-xs font-semibold ${
+                        doc.overallSimilarity >= 30
+                          ? "bg-green-100 text-green-700"
+                          : doc.overallSimilarity >= 15
+                            ? "bg-blue-100 text-blue-700"
+                            : "bg-gray-100 text-gray-500"
+                      }`}>
+                        유사도 {doc.overallSimilarity}%
+                      </span>
+                      {doc.breakdown.idOverlap > 0 && (
+                        <span className="rounded-full bg-gray-100 px-3 py-1 text-xs font-medium text-gray-500">
+                          ID {doc.breakdown.idOverlap}%
+                        </span>
+                      )}
+                    </div>
+                  </div>
+
+                  {/* 설명 */}
+                  <p className="mt-2 text-sm text-gray-500">{doc.explanation}</p>
+
+                  {/* 프로젝트 요약: 사업명 · 기간 · 요구사항 */}
+                  <div className="mt-2 flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-gray-500">
+                    {doc.bizName && (
+                      <span className="flex items-center gap-1">
+                        <span className="text-gray-400">🏷️</span>
+                        <span className="truncate max-w-[200px]">{doc.bizName}</span>
+                      </span>
+                    )}
+                    {doc.period && (
+                      <span className="flex items-center gap-1">
+                        <span className="text-gray-400">📅</span>
+                        <span>{doc.period}</span>
+                      </span>
+                    )}
+                    <span className="flex items-center gap-1">
+                      <span className="text-gray-400">📊</span>
+                      <span>요구사항 {doc.reqCount}건</span>
+                    </span>
+                    {doc.docName && (
+                      <span className="flex items-center gap-1 truncate max-w-[250px]">
+                        <span className="text-gray-400">📎</span>
+                        <span className="truncate">{doc.docName}</span>
+                      </span>
+                    )}
+                  </div>
+
+                  {/* breakdown + 헤더 매칭 */}
+                  <div className="mt-3 flex gap-3">
+                    <div className="flex items-center gap-1.5 rounded-lg bg-purple-50 px-3 py-1.5 text-xs">
+                      <span className="text-purple-600 font-semibold">📋 문서</span>
+                      <span className="text-purple-700 font-bold">{doc.breakdown.headerSimilarity}%</span>
+                    </div>
+                    <div className="flex items-center gap-1.5 rounded-lg bg-blue-50 px-3 py-1.5 text-xs">
+                      <span className="text-blue-600 font-semibold">📝 요구사항</span>
+                      <span className="text-blue-700 font-bold">{doc.breakdown.contentSimilarity}%</span>
+                    </div>
+                    <div className="flex items-center gap-1.5 rounded-lg bg-gray-50 px-3 py-1.5 text-xs">
+                      <span className="text-gray-500">ID 일치</span>
+                      <span className="text-gray-700 font-bold">{doc.breakdown.idOverlap}%</span>
+                    </div>
+                    <div className="flex items-center gap-1.5 rounded-lg bg-green-50 px-3 py-1.5 text-xs">
+                      <span className="text-green-600">매칭</span>
+                      <span className="text-green-700 font-bold">{doc.matchedPairs.length}건</span>
+                    </div>
+                  </div>
+
+                  {/* 헤더 매칭 스니펫 */}
+                  {doc.headerMatchText && (
+                    <div className="mt-3 rounded-lg border border-purple-100 bg-purple-50/30 p-3">
+                      <p className="text-xs text-purple-600 mb-1 font-medium">📋 문서 개요 매칭</p>
+                      <div
+                        className="text-sm text-gray-700 leading-relaxed"
+                        dangerouslySetInnerHTML={{
+                          __html: doc.headerMatchText.replace(
+                            /<(?!\/?mark\b)[^>]*>/g,
+                            ""
+                          ),
+                        }}
+                      />
+                    </div>
+                  )}
+
+                  {/* 매칭 페어 리스트 */}
+                  <div className="mt-4 space-y-3 max-h-96 overflow-y-auto">
+                    {doc.matchedPairs.slice(0, 20).map((pair, i) => (
+                      <div key={`${pair.sourceId}-${pair.targetId}-${i}`} className="rounded-lg border border-gray-100 bg-gray-50/50 p-3">
+                        <div className="flex items-start justify-between gap-2">
+                          <div className="flex-1 min-w-0">
+                            {/* 소스 → 타겟 */}
+                            <div className="flex items-center gap-1.5 text-xs">
+                              <span className="shrink-0 rounded bg-blue-100 px-1.5 py-0.5 font-mono font-semibold text-blue-700">
+                                {pair.sourceOriginalId || `#${i}`}
+                              </span>
+                              <span className="text-gray-400">→</span>
+                              <span className="shrink-0 rounded bg-gray-100 px-1.5 py-0.5 font-mono font-semibold text-gray-600">
+                                {pair.targetOriginalId || "?"}
+                              </span>
+                              <span className="truncate text-gray-500">
+                                {pair.targetName || pair.sourceName || ""}
+                              </span>
+                            </div>
+
+                            {/* 내용/헤드라인 */}
+                            {pair.matchType === "content" && pair.targetHeadline ? (
+                              <div
+                                className="mt-1.5 text-sm text-gray-700 leading-relaxed"
+                                dangerouslySetInnerHTML={{
+                                  __html: pair.targetHeadline.replace(/<[^>]*>/g, (tag) => {
+                                    if (tag === "<mark>" || tag === "</mark>") return tag;
+                                    return "";
+                                  }),
+                                }}
+                              />
+                            ) : pair.matchType === "content" ? (
+                              <p className="mt-1.5 text-sm text-gray-600 line-clamp-2">
+                                {pair.targetText}
+                              </p>
+                            ) : (
+                              <p className="mt-1.5 text-sm text-gray-400 italic line-clamp-1">
+                                ℹ️ 동일 템플릿 ID, 내용 상이 — {pair.targetText.slice(0, 60)}...
+                              </p>
+                            )}
+                          </div>
+
+                          {/* 점수 */}
+                          <div className="shrink-0 text-right">
+                            {pair.matchType === "content" ? (
+                              <span className="rounded-full bg-blue-100 px-2 py-0.5 text-xs font-semibold text-blue-700">
+                                {pair.score}
+                              </span>
+                            ) : (
+                              <span className="rounded-full bg-gray-100 px-2 py-0.5 text-xs text-gray-400">
+                                참고
+                              </span>
+                            )}
+                          </div>
                         </div>
                       </div>
                     ))}
+                    {doc.matchedPairs.length > 20 && (
+                      <p className="text-center text-xs text-gray-400">
+                        ... 외 {doc.matchedPairs.length - 20}건 더 보기
+                      </p>
+                    )}
                   </div>
                 </div>
               ))}

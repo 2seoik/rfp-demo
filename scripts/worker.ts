@@ -64,6 +64,47 @@ function backoffDelay(retryCount: number): number {
   return Math.min(1000 * Math.pow(2, retryCount) + Math.random() * 500, 10000);
 }
 
+// ─── 사업개요 섹션 추출 (TOC 건너뛰기) ──────────────────
+function extractOverviewSection(fullText: string): string {
+  const HEADING_RE = /사\s*업\s*개\s*요/g;
+  // 표지 앞부분 포함 (사업명 추출용)
+  const coverPart = fullText.slice(0, Math.min(500, fullText.length));
+
+  function lineAt(text: string, pos: number) {
+    const nl = text.indexOf("\n", pos);
+    return nl >= 0 ? text.slice(pos, nl) : text.slice(pos, pos + 200);
+  }
+
+  function isTocLine(line: string) {
+    const dotCount = (line.match(/[·.]/g) || []).length;
+    return dotCount >= 4 && /\d{1,4}\s*$/.test(line);
+  }
+
+  let match;
+  HEADING_RE.lastIndex = 0;
+  while ((match = HEADING_RE.exec(fullText)) !== null) {
+    const line = lineAt(fullText, match.index);
+    if (!isTocLine(line)) {
+      const idx = match.index;
+      const nextHeading = fullText.slice(idx + 10).search(/\n\s*[ⅡⅢⅣ]\./);
+      const end = nextHeading > 0 ? idx + 10 + nextHeading : idx + 6000;
+      return coverPart + "\n---SECTION---\n" + fullText.slice(idx, Math.min(end, idx + 6000));
+    }
+  }
+  // Fallback
+  const altRe = /사\s*업\s*(?:개요|명|목적|배경|내용|기간|예산|범위)/g;
+  altRe.lastIndex = Math.floor(fullText.length * 0.03);
+  const altMatch = altRe.exec(fullText);
+  if (altMatch) {
+    return coverPart + "\n---SECTION---\n" + fullText.slice(
+      Math.max(0, altMatch.index - 150),
+      Math.min(fullText.length, altMatch.index + 4000)
+    );
+  }
+  const start = Math.floor(fullText.length * 0.1);
+  return coverPart + "\n---SECTION---\n" + fullText.slice(start, start + 3000);
+}
+
 // ─── Deduplicate by ID ─────────────────────────────────────
 function deduplicateById(reqs: any[]): any[] {
   const seen = new Set<string>();
@@ -255,7 +296,13 @@ async function handleRfpAnalyze(job: any) {
 
   // 2. 문서 앞부분에서 사업정보 추출용 헤더
   await updateJob(jobId, { progress: 15, message: "사업정보 추출 중..." });
-  const headerText = text.slice(0, Math.min(2000, text.length));
+  const headerText = extractOverviewSection(text);
+
+  // 헤더 텍스트 저장 (유사 RFP 문서수준 비교용)
+  await db.execute(sql`
+    UPDATE documents SET header_text = ${headerText} WHERE id = ${documentId}::uuid
+  `);
+  log(jobId, `📋 문서 헤더 저장 완료 (${headerText.length}자)`);
 
   // 3. 요구사항 섹션 찾기
   await updateJob(jobId, { progress: 20, message: "요구사항 섹션 찾는 중..." });
