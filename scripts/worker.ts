@@ -69,10 +69,10 @@ function cleanDescription(blockText: string, id: string, name: string | null): s
   // 2. ID 문자열 제거 (대소문자 구분 없이)
   text = text.replace(idRe, "");
 
-  // 3. 명칭(name) 제거 — ID 바로 다음 위치에서만. 설명 본문의 동일 단어는 보존.
+  // 3. 명칭(name) 제거 — "요구사항 명칭 [name]" 패턴도 함께 제거 (RFP 템플릿 접두사)
   if (name && name.length >= 2) {
     const nameRe = new RegExp(
-      "^\\s*" + escapeRegex(name) + "(?:\\s*[·●•○]?)?",
+      "^(?:요구사항\\s*명칭\\s*)?" + escapeRegex(name) + "(?:\\s*[·●•○]?)?",
       ""
     );
     text = text.replace(nameRe, " ");
@@ -85,6 +85,27 @@ function cleanDescription(blockText: string, id: string, name: string | null): s
     .replace(/^\s+/gm, "")          // 줄머리 공백
     .replace(/\n{2,}/g, "\n")       // 연속 줄바꿈 → 하나
     .trim();
+
+  // 5. RFP 템플릿 보일러플레이트 제거 (행 단위)
+  const lines = text.split("\n");
+  const cleanLines: string[] = [];
+  for (let line of lines) {
+    const t = line.trim();
+    if (!t) continue;
+    // 순수 템플릿 라벨 행 → 제거
+    if (/^(요구사항|세부내용|세부|내용)$/i.test(t)) continue;
+    // 페이지 번호 ("- 6 -", "- 10 -")
+    if (/^-\s*\d+\s*-$/i.test(t)) continue;
+    // 합계 행, 산출정보 행 제거
+    if (/^(합\s*계|산출정보)\b/i.test(t)) continue;
+    // 다음 요구사항 헤더 누출 제거 ("요구사항 분류 ...", "요구사항 고유번호 ...")
+    if (/^요구사항\s*(분류|고유번호)/i.test(t)) continue;
+    // "정의 " 접두사 제거 (RFP 표 컬럼 헤더, 본문은 보존)
+    let cleaned = t.replace(/^정의\s*/i, "");
+    if (!cleaned) continue;
+    cleanLines.push(cleaned);
+  }
+  text = cleanLines.join("\n");
 
   return text.slice(0, 1000);
 }
