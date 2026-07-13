@@ -96,8 +96,8 @@ function cleanDescription(blockText: string, id: string, name: string | null): s
     if (/^(요구사항|세부내용|세부|내용)$/i.test(t)) continue;
     // 페이지 번호 ("- 6 -", "- 10 -")
     if (/^-\s*\d+\s*-$/i.test(t)) continue;
-    // 합계 행, 산출정보 행 제거
-    if (/^(합\s*계|산출정보)\b/i.test(t)) continue;
+    // 합계 행, 산출정보 행 제거 (\b 대신 \s — JavaScript에서 한글은 \w가 아니므로 word boundary 미작동)
+    if (/^(합\s*계|산출정보)(?:\s|$)/i.test(t)) continue;
     // 다음 요구사항 헤더 누출 제거 ("요구사항 분류 ...", "요구사항 고유번호 ...")
     if (/^요구사항\s*(분류|고유번호)/i.test(t)) continue;
     // "정의 " 접두사 제거 (RFP 표 컬럼 헤더, 본문은 보존)
