@@ -660,14 +660,23 @@ export default function ProjectClient({ data, autoAnalyze }: Props) {
 
                   {/* 요약 배지 (항상 표시) */}
                   <div className="mt-2 flex flex-wrap items-center gap-2">
-                    <span className="inline-flex items-center gap-1 rounded-full bg-purple-50 px-2.5 py-0.5 text-xs font-medium text-purple-700">
+                    <span
+                      className="inline-flex items-center gap-1 rounded-full bg-purple-50 px-2.5 py-0.5 text-xs font-medium text-purple-700 cursor-help"
+                      title="사업개요(표지·목차·개요) 텍스트 유사도. 동일 문서=100%"
+                    >
                       문서 {doc.breakdown.headerSimilarity}%
                     </span>
-                    <span className="inline-flex items-center gap-1 rounded-full bg-blue-50 px-2.5 py-0.5 text-xs font-medium text-blue-700">
+                    <span
+                      className="inline-flex items-center gap-1 rounded-full bg-blue-50 px-2.5 py-0.5 text-xs font-medium text-blue-700 cursor-help"
+                      title="전체 요구사항 중 하나 이상 키워드가 매칭된 비율"
+                    >
                       요구사항 {doc.breakdown.contentSimilarity}%
                     </span>
                     {doc.breakdown.idOverlap > 0 && (
-                      <span className="inline-flex items-center gap-1 rounded-full bg-gray-100 px-2.5 py-0.5 text-xs text-gray-500">
+                      <span
+                        className="inline-flex items-center gap-1 rounded-full bg-gray-100 px-2.5 py-0.5 text-xs text-gray-500 cursor-help"
+                        title="동일한 요구사항 ID(예: SFR-001)를 공유하는 비율. 같은 RFP 템플릿 사용 시 높음"
+                      >
                         ID {doc.breakdown.idOverlap}%
                       </span>
                     )}
