@@ -102,8 +102,8 @@ function cleanDescription(blockText: string, id: string, name: string | null): s
     if (/^요구사항\s*(분류|고유번호)/i.test(t)) continue;
     // 섹션 번호 누출 제거 ("2) 기능 요구사항", "3. 시스템 구성")
     if (/^\d+[).]\s/i.test(t)) continue;
-    // "정의 " 접두사 제거 (RFP 표 컬럼 헤더, 본문은 보존)
-    let cleaned = t.replace(/^정의\s*/i, "");
+    // "정의 " 접두사 제거 + "요구사항상세설명" 접두사 제거 (RFP 표 컬럼 헤더)
+    let cleaned = t.replace(/^정의\s*/i, "").replace(/^요구사항상세설명/i, "");
     if (!cleaned) continue;
     cleanLines.push(cleaned);
   }
