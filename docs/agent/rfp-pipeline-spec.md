@@ -1478,33 +1478,39 @@ Worker가 동일 프로젝트 재분석 시 기존 `requirements`를 삭제하�
 
 `src/db/schema.ts`의 외래키가 `ON DELETE` 동작을 명시하지 않는다. 삭제 시 테이블마다 수동 DELETE를 실행해야 한다. `CASCADE`를 설정하면 삭제 코드가 단순해지고 누락 위험이 줄어든다. 마이그레이션 검증 후 적용한다.
 
-### 16.13 미사용(Dead) 분석 파이프라인 (코드 품질 P1) 🔴
+### 16.13 미사용(Dead) 분석 파이프라인 (코드 품질 P1) ✅
 
-4개의 분석/검색 파이프라인이 공존하지만 운영은 Worker 1곳만 사용한다:
+2026-07-13 삭제 완료 (11개 파일, -1,613행):
 
-- `scripts/worker.ts` — 운영 (ID 경계 분할 + 배치 동시 호출)
-- `src/app/api/projects/[id]/analyze/route.ts` — SSE 기반 동기 분석 (미사용)
-- `src/lib/services/rfp-analysis.ts` — 별도 분석 서비스 (미사용)
+- `src/app/api/projects/[id]/analyze/route.ts` — SSE 동기 분석 (미사용)
+- `src/lib/services/rfp-analysis.ts` — 별도 분석 서비스 (미사용, 타입 오류 3건)
 - `src/lib/services/document-processor.ts` — 청크 생성 (미사용)
-- `src/lib/search.ts` `hybridSearch` — pgvector 하이브리드 검색 (미사용, `document_chunks` 비어 있음)
+- `src/lib/services/answer-recommendation.ts` — 응답 추천 (미사용, UI 미연결)
+- `src/lib/services/export.ts` — 내보내기 (미사용, UI 미연결)
+- `src/lib/search.ts` — `hybridSearch` pgvector 하이브리드 검색
+- `src/lib/prompts.ts` — 구식 프롬프트 (`RFP_ANALYSIS_SYSTEM_PROMPT`, `ANSWER_RECOMMENDATION_SYSTEM_PROMPT`)
+- `src/lib/llm.ts` — `chat`/`getEmbedding` (Provider Adapter로 대체됨)
+- `src/lib/chunker.ts` — 청크 분할 (Worker에 통합됨)
+- `src/lib/parser.ts` — 문서 파서 (Worker에 통합됨)
+- `src/app/settings/page.tsx` — 설정 페이지 (저장 로직 없음, 미사용)
 
-미사용 코드는 제거 또는 `deprecated` 표시한다. 임베딩 파이프라인 재도입 시 분리 브랜치에서 복원한다.
+연쇄 삭제: 참조 체인이 모두 단방향이었기 때문에 안전하게 일괄 제거 가능. tsc 오류 11→8 감소.
 
-### 16.14 설정 페이지 미작동 (UX/기능 P1) 🔴
+### 16.14 설정 페이지 미작동 (UX/기능 P1) ✅
 
-`/settings` 페이지는 기본값만 표시하고 저장 로직이 없다. 모델 목록이 `src/lib/provider.ts`의 `MODEL_CONFIG`와 불일치한다. 저장 API 연결 또는 페이지 제거를 검토한다.
+`/settings` 페이지 삭제. 저장 로직과 모델 목록이 `provider.ts`와 불일치하여 혼란을 야기했다. LLM 설정은 `.env`와 `provider.ts`에서 직접 관리한다.
 
-### 16.15 환경변수 기본값 분산 (코드 품질 P1) 🔴
+### 16.15 환경변수 기본값 분산 (코드 품질 P1) ✅
 
-`src/lib/provider.ts`와 `src/lib/env.ts`가 각각 별도의 기본값을 갖는다. 단일 진실 공급원(single source of truth)으로 통일한다.
+`src/lib/env.ts`에서 LLM 관련 기본값(`LLM_MODEL: "deepseek-chat"`, `LLM_API_BASE: "https://api.opencode.ai/v1"`)을 제거. `provider.ts`의 `getPrimaryModel()`이 단일 진실 공급원이다.
 
 ### 16.16 유사 검색 GIN 인덱스 미설정 (성능 P1) 🔴
 
 `requirements.source_text`와 `documents.header_text`에 `to_tsvector` 기반 FTS를 수행하지만 GIN 인덱스가 없다. 데이터 증가 시 성능 저하가 발생한다.
 
-### 16.17 미연결 서비스 (기능 P2) 🔴
+### 16.17 미연결 서비스 (기능 P2) ✅ → §16.13에 통합 삭제됨
 
-`src/lib/services/export.ts`(내보내기)와 `src/lib/services/answer-recommendation.ts`(응답 추천)은 구현되어 있으나 UI 호출 지점이 없다.
+`src/lib/services/export.ts`, `src/lib/services/answer-recommendation.ts`은 §16.13 dead code 정리에서 함께 삭제됨.
 
 ### 16.18 매트릭스 정렬/필터 부재, 모바일 삭제 접근성 (UX P2) ⚠️
 
@@ -1539,9 +1545,9 @@ Worker가 동일 프로젝트 재분석 시 기존 `requirements`를 삭제하�
 | 항목 | 작업 | 완료 조건 | 상태 | §16 |
 |---|---|---|---|---|
 | 17.8 | FK `ON DELETE CASCADE` + 일괄 INSERT | 단일 DELETE로 전파, INSERT 배치 | 🔴 | 16.12 |
-| 17.9 | 미사용 분석 파이프라인 제거/표시 | dead code 4건 정리 | 🔴 | 16.13 |
-| 17.10 | 설정 페이지 저장 로직 또는 제거 | 설정 변경이 `.env`/Worker에 반영 또는 페이지 제거 | 🔴 | 16.14 |
-| 17.11 | 환경변수 기본값 단일 진실 공급원 통일 | `provider.ts`/`env.ts` 불일치 제거 | 🔴 | 16.15 |
+| 17.9 | 미사용 분석 파이프라인 제거/표시 | dead code 11건 정리 (+1,613행 삭제) | ✅ | 16.13 |
+| 17.10 | 설정 페이지 저장 로직 또는 제거 | 페이지 + 네비게이션 링크 삭제 | ✅ | 16.14 |
+| 17.11 | 환경변수 기본값 단일 진실 공급원 통일 | `provider.ts`/`env.ts` 불일치 제거 | ✅ | 16.15 |
 | 17.12 | 유사 검색 GIN 인덱스 | FTS 쿼리 실행계획에 Index Scan | 🔴 | 16.16 |
 | 17.13 | 모든 청크 실패 처리 | 0건 성공 오판 제거 | ✅ | 16.4 |
 | 17.14 | stuck Job 복구 | Worker 재시작 후 자동 재처리 | ✅ | 16.5 |
@@ -1552,7 +1558,7 @@ Worker가 동일 프로젝트 재분석 시 기존 `requirements`를 삭제하�
 
 | 항목 | 작업 | 완료 조건 | 상태 | §16 |
 |---|---|---|---|---|
-| 17.17 | 미연결 서비스 UI 연결 (export/answer-recommendation) | UI에서 내보내기/응답 추천 호출 가능 | 🔴 | 16.17 |
+| 17.17 | 미연결 서비스 UI 연결 (export/answer-recommendation) | UI에서 내보내기/응답 추천 호출 가능 | ✅ → §16.13과 함께 삭제 | 16.17 |
 | 17.18 | 매트릭스 정렬/필터, 모바일 삭제 버튼 a11y | 정렬/필터 동작, 스크린 리더 라벨/포커스 | ⚠️ (정렬+a11y 완료, 필터 보류) | 16.18 |
 | 17.19 | 벡터 검색 | FTS 대비 검색 품질 비교 | 🔴 | — |
 | 17.20 | Worker pool | 다중 Job 병렬 처리 검증 | 🔴 | — |

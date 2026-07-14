@@ -36,11 +36,6 @@ export default function RootLayout({
                 </Link>
               </div>
             </div>
-            <div className="flex items-center gap-3 text-sm">
-              <Link href="/settings" className="text-gray-500 hover:text-gray-700 transition">
-                설정
-              </Link>
-            </div>
           </div>
         </nav>
         <main>{children}</main>

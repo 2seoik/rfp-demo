@@ -30,8 +30,8 @@ const getEnv = (key: string, fallback?: string): string => {
 
 export const env = {
   DATABASE_URL: process.env.DATABASE_URL, // 선택적 (DB 없이 LLM 테스트 가능)
-  LLM_API_BASE: process.env.LLM_API_BASE ?? "https://api.opencode.ai/v1",
+  LLM_API_BASE: process.env.LLM_API_BASE, // provider.ts가 기본값 없이 설정, .env에서 주입
   LLM_API_KEY: getEnv("LLM_API_KEY"),
-  LLM_MODEL: process.env.LLM_MODEL ?? "deepseek-chat",
+  LLM_MODEL: process.env.LLM_MODEL,      // provider.ts getPrimaryModel()에서 기본값 "kimi-k2.6"
   AUTH_SECRET: process.env.AUTH_SECRET,
 };
