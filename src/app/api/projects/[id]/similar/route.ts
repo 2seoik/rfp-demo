@@ -356,7 +356,8 @@ export async function GET(
     }
 
     // 7. 유사도 계산 + 응답 조립
-    const totalSource = sourceReqs.length;
+    // source_text가 비어있는 요구사항은 키워드 추출이 불가능하므로 분모에서 제외
+    const totalSource = sourceReqs.filter((r: any) => r.source_text?.length > 0).length;
 
     const similar = Object.values(projectGroups)
       .map((g) => {

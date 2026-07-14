@@ -20,6 +20,8 @@ const FALSE_POSITIVE_IDS = new Set<string>([
   // 암호화 방식 오탐
   "SHA-256",
   "SHA-512",
+  // 장비 모델명 오탐
+  "SMPX-892",
 ]);
 
 /**

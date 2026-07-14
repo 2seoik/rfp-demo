@@ -107,6 +107,7 @@ export default function ProjectClient({ data, autoAnalyze }: Props) {
   const [sortDir, setSortDir] = useState<"asc" | "desc">("desc"); // 기본: order 내림차순 — 문서 뒤쪽 요구사항이 상세내용이 풍부함
   // 매트릭스 유형 필터 (rfp-pipeline-spec.md §16.18 / §17.18)
   const [filterType, setFilterType] = useState<string | null>(null);
+  const [hideEmpty, setHideEmpty] = useState(true); // 빈 source_text 숨김 토글
   const handleSort = (key: typeof sortBy) => {
     if (sortBy === key) {
       setSortDir((d) => (d === "asc" ? "desc" : "asc"));
@@ -118,6 +119,7 @@ export default function ProjectClient({ data, autoAnalyze }: Props) {
   const sortedRequirements = useMemo(() => {
     let list = [...requirements];
     if (filterType) list = list.filter((r) => r.type === filterType);
+    if (hideEmpty) list = list.filter((r) => r.source_text?.length > 0);
     const dir = sortDir === "asc" ? 1 : -1;
     list.sort((a, b) => {
       let av: string | number;
@@ -131,7 +133,7 @@ export default function ProjectClient({ data, autoAnalyze }: Props) {
       return 0;
     });
     return list;
-  }, [requirements, sortBy, sortDir, filterType]);
+  }, [requirements, sortBy, sortDir, filterType, hideEmpty]);
 
   // Analysis progress state
   // autoAnalyze: 업로드 직후 진입 시 true (폴링 즉시 시작)
@@ -464,6 +466,14 @@ export default function ProjectClient({ data, autoAnalyze }: Props) {
                   </button>
                 ));
               })()}
+              <span className="text-gray-300 mx-2">|</span>
+              <button
+                onClick={() => setHideEmpty(!hideEmpty)}
+                className={`rounded-full px-2.5 py-0.5 transition ${hideEmpty ? "bg-gray-100 text-gray-500 hover:bg-gray-200" : "bg-amber-50 text-amber-700 hover:bg-amber-100"}`}
+                title={hideEmpty ? "빈 요구사항 숨김 (클릭하여 모두 보기)" : "모든 요구사항 표시 중 (클릭하여 빈 값 숨기기)"}
+              >
+                {hideEmpty ? "내용 있음" : "전체 표시"}
+              </button>
             </div>
             <div className="overflow-hidden rounded-xl border border-gray-200 bg-white">
               <table className="w-full text-left text-sm">
