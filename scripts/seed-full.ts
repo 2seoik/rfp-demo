@@ -102,7 +102,7 @@ async function processRFP(filePath: string, fileName: string, projectId: string,
 
   console.log(`   🤖 요구사항 추출 중... (${excerpt.length}자)`);
   const response = await client.chat.completions.create({
-    model: process.env.LLM_MODEL,
+    model: process.env.LLM_MODEL || "minimax-m2.7",
     messages: [
       { role: "system", content: SYSTEM_PROMPT },
       { role: "user", content: `RFP 문서:\n${excerpt}\n\n---\n요구사항을 JSON 배열로 출력:` },

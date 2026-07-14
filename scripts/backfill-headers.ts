@@ -2,15 +2,15 @@ const { Pool } = require("pg");
 const fs = require("fs");
 const pool = new Pool({ connectionString: "postgres://rfpuser:rfppass@localhost:5432/rfp-demo" });
 
-function extractOverviewSection(fullText) {
+function extractOverviewSection(fullText: string): string {
   const HEADING_RE = /사\s*업\s*개\s*요/g;
   const coverPart = fullText.slice(0, Math.min(500, fullText.length));
 
-  function lineAt(text, pos) {
+  function lineAt(text: string, pos: number): string {
     const nl = text.indexOf("\n", pos);
     return nl >= 0 ? text.slice(pos, nl) : text.slice(pos, pos + 200);
   }
-  function isTocLine(line) {
+  function isTocLine(line: string): boolean {
     return (line.match(/[·.]/g) || []).length >= 4 && /\d{1,4}\s*$/.test(line);
   }
 
@@ -52,7 +52,7 @@ async function backfill() {
           console.log("OK   " + d.name + " (" + header.length + " chars)");
           updated++;
         }
-      } catch (e) {
+      } catch (e: any) {
         console.log("ERR  " + d.name + ": " + e.message.slice(0, 60));
       }
     }

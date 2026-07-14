@@ -126,7 +126,7 @@ async function extractRequirements(filePath: string, fileName: string) {
   console.log(`\n[${fileName}] 분석 중... (${text.length}자 중 ${excerpt.length}자)`);
 
   const response = await client.chat.completions.create({
-    model: process.env.LLM_MODEL,
+    model: process.env.LLM_MODEL || "minimax-m2.7",
     messages: [
       { role: "system", content: SYSTEM_PROMPT },
       { role: "user", content: `RFP 문서:\n${excerpt}\n\n---\n요구사항을 JSON 배열로 출력:` },
@@ -193,7 +193,7 @@ async function main() {
       console.log(`\n[검색] ${(q.sourceText || "").slice(0, 100)}`);
 
       const searchRes = await client.chat.completions.create({
-        model: process.env.LLM_MODEL,
+        model: process.env.LLM_MODEL || "minimax-m2.7",
         messages: [
           { role: "system", content: "RFP 비교 전문가. 두 RFP 간 유사 요구사항을 찾아 비교하세요." },
           { role: "user", content: `요구사항: ${q.sourceText}\n\n비교 RFP:\n${poly.text.slice(0, 6000)}` },
