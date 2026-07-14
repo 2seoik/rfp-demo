@@ -140,6 +140,7 @@ export default function ProjectClient({ data, autoAnalyze }: Props) {
   const [progress, setProgress] = useState(0);
   const [progressMessage, setProgressMessage] = useState("");
   const [analyzeError, setAnalyzeError] = useState("");
+  const [showCompletionCta, setShowCompletionCta] = useState(false);
   const pollingRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   // Similar RFP state
@@ -172,6 +173,7 @@ export default function ProjectClient({ data, autoAnalyze }: Props) {
         if (data.status === "completed") {
           setProgressMessage(data.message || "분석 완료!");
           setAnalyzing(false);
+          setShowCompletionCta(true);
           clearInterval(pollingRef.current!);
           pollingRef.current = null;
           setTimeout(() => router.refresh(), 1500);
@@ -383,6 +385,32 @@ export default function ProjectClient({ data, autoAnalyze }: Props) {
                 className="rounded-lg bg-red-600 px-4 py-2 text-sm text-white hover:bg-red-700"
               >
                 삭제
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* 분석 완료 CTA (rfp-pipeline-spec.md §5.3) */}
+      {showCompletionCta && (
+        <div className="mb-6 rounded-xl border border-green-200 bg-green-50 p-4">
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-2">
+              <span className="text-lg">✅</span>
+              <span className="text-sm font-medium text-green-800">분석이 완료되었습니다</span>
+            </div>
+            <div className="flex items-center gap-2">
+              <button
+                onClick={() => { setActiveTab("similar"); setShowCompletionCta(false); }}
+                className="rounded-lg bg-green-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-green-700 transition"
+              >
+                유사 RFP 비교하기 →
+              </button>
+              <button
+                onClick={() => setShowCompletionCta(false)}
+                className="rounded-lg px-2 py-1.5 text-xs text-gray-400 hover:text-gray-600"
+              >
+                ✕
               </button>
             </div>
           </div>
