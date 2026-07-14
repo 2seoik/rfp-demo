@@ -103,6 +103,8 @@ export default function ProjectClient({ data, autoAnalyze }: Props) {
   // 매트릭스 정렬 (rfp-pipeline-spec.md §16.18)
   const [sortBy, setSortBy] = useState<"order" | "original_id" | "name" | "type">("order");
   const [sortDir, setSortDir] = useState<"asc" | "desc">("asc");
+  // 매트릭스 유형 필터 (rfp-pipeline-spec.md §16.18 / §17.18)
+  const [filterType, setFilterType] = useState<string | null>(null);
   const handleSort = (key: typeof sortBy) => {
     if (sortBy === key) {
       setSortDir((d) => (d === "asc" ? "desc" : "asc"));
@@ -112,7 +114,8 @@ export default function ProjectClient({ data, autoAnalyze }: Props) {
     }
   };
   const sortedRequirements = useMemo(() => {
-    const list = [...requirements];
+    let list = [...requirements];
+    if (filterType) list = list.filter((r) => r.type === filterType);
     const dir = sortDir === "asc" ? 1 : -1;
     list.sort((a, b) => {
       let av: string | number;
@@ -126,7 +129,7 @@ export default function ProjectClient({ data, autoAnalyze }: Props) {
       return 0;
     });
     return list;
-  }, [requirements, sortBy, sortDir]);
+  }, [requirements, sortBy, sortDir, filterType]);
 
   // Analysis progress state
   // autoAnalyze: 업로드 직후 진입 시 true (폴링 즉시 시작)
@@ -412,13 +415,23 @@ export default function ProjectClient({ data, autoAnalyze }: Props) {
           <div className="flex-1">
             {/* 요약 바 */}
             <div className="mb-3 flex flex-wrap items-center gap-2 text-xs">
+              <button
+                onClick={() => setFilterType(null)}
+                className={`rounded-full px-2.5 py-0.5 transition ${!filterType ? "bg-blue-600 text-white" : "bg-gray-100 text-gray-600 hover:bg-gray-200"}`}
+              >
+                전체 ({requirements.length})
+              </button>
               {(() => {
                 const dist: Record<string, number> = {};
                 requirements.forEach((r) => { dist[r.type] = (dist[r.type] || 0) + 1; });
                 return Object.entries(dist).sort((a, b) => b[1] - a[1]).map(([t, c]) => (
-                  <span key={t} className="rounded-full bg-blue-50 px-2 py-0.5 text-blue-700">
+                  <button
+                    key={t}
+                    onClick={() => setFilterType(filterType === t ? null : t)}
+                    className={`rounded-full px-2.5 py-0.5 transition ${filterType === t ? "bg-blue-600 text-white" : "bg-blue-50 text-blue-700 hover:bg-blue-100"}`}
+                  >
                     {TYPE_LABELS[t] ?? t} {c}
-                  </span>
+                  </button>
                 ));
               })()}
             </div>
