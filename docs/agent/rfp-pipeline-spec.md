@@ -1564,7 +1564,7 @@ GIN 인덱스 마이그레이션 파일 생성: `idx_requirements_source_text_ft
 | 17.18 | 매트릭스 정렬/필터, 모바일 삭제 버튼 a11y | 정렬/필터 동작, 스크린 리더 라벨/포커스 | ✅ | 16.18 |
 | 17.19 | 벡터 검색 | FTS 대비 검색 품질 비교 | 🔴 (EMBEDDING_API_URL 미설정) | — |
 | 17.20 | Worker pool | 다중 Job 병렬 처리 검증 | ✅ | — |
-| 17.21 | 타입 정리 | 주요 API/컴포넌트의 `any` 제거 | 🔴 | — |
+| 17.21 | 타입 정리 | 주요 API/컴포넌트의 `any` 제거 | ✅ (page.tsx + ProjectClient.tsx 완료, scripts/ 잔여) | — |
 
 ---
 
