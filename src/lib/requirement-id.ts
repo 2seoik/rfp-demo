@@ -17,6 +17,9 @@ const REQ_ID_PATTERN = /[A-Z]{2,4}-\d{3}/gi;
 /** 이미 알려진 오탐 패턴 (정규식 검출 후 2차 필터링) */
 const FALSE_POSITIVE_IDS = new Set<string>([
   // 일반적인 날짜/버전/페이지 번호는 이미 [A-Z]{2,4}-\d{3}에 걸리지 않음
+  // 암호화 방식 오탐
+  "SHA-256",
+  "SHA-512",
 ]);
 
 /**

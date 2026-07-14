@@ -104,7 +104,7 @@ export default function ProjectClient({ data, autoAnalyze }: Props) {
   );
   // 매트릭스 정렬 (rfp-pipeline-spec.md §16.18)
   const [sortBy, setSortBy] = useState<"order" | "original_id" | "name" | "type">("order");
-  const [sortDir, setSortDir] = useState<"asc" | "desc">("asc");
+  const [sortDir, setSortDir] = useState<"asc" | "desc">("desc"); // 기본: order 내림차순 — 문서 뒤쪽 요구사항이 상세내용이 풍부함
   // 매트릭스 유형 필터 (rfp-pipeline-spec.md §16.18 / §17.18)
   const [filterType, setFilterType] = useState<string | null>(null);
   const handleSort = (key: typeof sortBy) => {
