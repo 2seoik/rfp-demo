@@ -50,7 +50,7 @@ export const documents = pgTable("documents", {
   orgId: uuid("org_id")
     .notNull()
     .references(() => organizations.id),
-  projectId: uuid("project_id").references(() => projects.id),
+  projectId: uuid("project_id").references(() => projects.id, { onDelete: "cascade" }),
   type: text("type").notNull().default("rfp"), // 'rfp' | 'knowledge'
   name: text("name").notNull(),
   fileUrl: text("file_url").notNull(),
@@ -66,7 +66,7 @@ export const documentChunks = pgTable(
     id: uuid("id").defaultRandom().primaryKey(),
     documentId: uuid("document_id")
       .notNull()
-      .references(() => documents.id),
+      .references(() => documents.id, { onDelete: "cascade" }),
     content: text("content").notNull(),
     embedding: vector("embedding", { dimensions: 1536 }), // 1536(OpenAI) / 1024(bge-m3) — ALTER 필요 시 변경
     page: integer("page"),
@@ -84,7 +84,7 @@ export const requirements = pgTable("requirements", {
   id: uuid("id").defaultRandom().primaryKey(),
   projectId: uuid("project_id")
     .notNull()
-    .references(() => projects.id),
+    .references(() => projects.id, { onDelete: "cascade" }),
   originalId: text("original_id"), // RFP 원문의 고유번호 (ECR-001, SFR-005 등)
   name: text("name"), // RFP 원문의 요구사항 명칭 (예: 시스템 아키텍처 설계)
   sourceText: text("source_text").notNull(),
@@ -102,7 +102,7 @@ export const responses = pgTable("responses", {
   id: uuid("id").defaultRandom().primaryKey(),
   requirementId: uuid("requirement_id")
     .notNull()
-    .references(() => requirements.id),
+    .references(() => requirements.id, { onDelete: "cascade" }),
   draftText: text("draft_text"),
   confidenceLabel: text("confidence_label").notNull().default("insufficient"), // 'sufficient' | 'partial' | 'needs_review' | 'insufficient'
   finalText: text("final_text"),
@@ -115,10 +115,10 @@ export const citations = pgTable("citations", {
   id: uuid("id").defaultRandom().primaryKey(),
   responseId: uuid("response_id")
     .notNull()
-    .references(() => responses.id),
+    .references(() => responses.id, { onDelete: "cascade" }),
   chunkId: uuid("chunk_id")
     .notNull()
-    .references(() => documentChunks.id),
+    .references(() => documentChunks.id, { onDelete: "cascade" }),
   score: integer("score"), // 유사도 점수 (0-100)
   createdAt: timestamp("created_at").defaultNow().notNull(),
 });
@@ -142,8 +142,8 @@ export const jobs = pgTable("jobs", {
   id: uuid("id").defaultRandom().primaryKey(),
   type: text("type").notNull(), // 'rfp_analyze' | 'embedding' | ...
   status: text("status").notNull().default("pending"), // pending | processing | completed | failed
-  projectId: uuid("project_id").references(() => projects.id),
-  documentId: uuid("document_id").references(() => documents.id),
+  projectId: uuid("project_id").references(() => projects.id, { onDelete: "cascade" }),
+  documentId: uuid("document_id").references(() => documents.id, { onDelete: "cascade" }),
   progress: integer("progress").default(0),
   message: text("message"),
   error: text("error"),

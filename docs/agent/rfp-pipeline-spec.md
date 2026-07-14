@@ -1474,9 +1474,11 @@ Worker가 동일 프로젝트 재분석 시 기존 `requirements`를 삭제하�
 
 2026-07-13 코드 검토에서 `GET /api/projects/[id]/analyze-status`가 `ORDER BY` 없이 요구사항을 반환한다고 기록했으나, 실제로는 해당 라우트는 job 상태(status/progress/message)만 반환하고 요구사항을 반환하지 않는다. 요구사항은 `src/app/projects/[id]/page.tsx`의 `getProjectData`에서 `ORDER BY req."order"`로 이미 정렬되어 조회된다. 따라서 수정 불필요.
 
-### 16.12 FK `ON DELETE CASCADE` 미설정 (성능/무결성 P1) 🔴
+### 16.12 FK `ON DELETE CASCADE` 미설정 (성능/무결성 P1) ✅
 
-`src/db/schema.ts`의 외래키가 `ON DELETE` 동작을 명시하지 않는다. 삭제 시 테이블마다 수동 DELETE를 실행해야 한다. `CASCADE`를 설정하면 삭제 코드가 단순해지고 누락 위험이 줄어든다. 마이그레이션 검증 후 적용한다.
+`src/db/schema.ts`의 모든 종속 FK에 `ON DELETE CASCADE`를 추가했다: documents→projects, documentChunks→documents, requirements→projects, responses→requirements, citations→responses/chunks, jobs→projects/documents. `organizations`/`users` FK는 CASCADE 대상에서 제외 (의도하지 않은 조직·사용자 삭제 방지). `DELETE /api/projects/[id]`가 단일 `DELETE FROM projects`로 단순화되었다.
+
+마이그레이션: `drizzle/0002_fk_cascade_gin_indexes.sql` (미적용 — `pnpm db:push`로 적용).
 
 ### 16.13 미사용(Dead) 분석 파이프라인 (코드 품질 P1) ✅
 
@@ -1504,9 +1506,9 @@ Worker가 동일 프로젝트 재분석 시 기존 `requirements`를 삭제하�
 
 `src/lib/env.ts`에서 LLM 관련 기본값(`LLM_MODEL: "deepseek-chat"`, `LLM_API_BASE: "https://api.opencode.ai/v1"`)을 제거. `provider.ts`의 `getPrimaryModel()`이 단일 진실 공급원이다.
 
-### 16.16 유사 검색 GIN 인덱스 미설정 (성능 P1) 🔴
+### 16.16 유사 검색 GIN 인덱스 미설정 (성능 P1) ✅
 
-`requirements.source_text`와 `documents.header_text`에 `to_tsvector` 기반 FTS를 수행하지만 GIN 인덱스가 없다. 데이터 증가 시 성능 저하가 발생한다.
+GIN 인덱스 마이그레이션 파일 생성: `idx_requirements_source_text_fts`(requirements.source_text), `idx_documents_header_text_fts`(documents.header_text). `drizzle/0002_fk_cascade_gin_indexes.sql`에 포함. 미적용 — `pnpm db:push`로 적용.
 
 ### 16.17 미연결 서비스 (기능 P2) ✅ → §16.13에 통합 삭제됨
 
@@ -1544,11 +1546,11 @@ Worker가 동일 프로젝트 재분석 시 기존 `requirements`를 삭제하�
 
 | 항목 | 작업 | 완료 조건 | 상태 | §16 |
 |---|---|---|---|---|
-| 17.8 | FK `ON DELETE CASCADE` + 일괄 INSERT | 단일 DELETE로 전파, INSERT 배치 | 🔴 | 16.12 |
+| 17.8 | FK `ON DELETE CASCADE` + 일괄 INSERT | 단일 DELETE로 전파, INSERT 배치 | ✅ (마이그레이션 미적용) | 16.12 |
 | 17.9 | 미사용 분석 파이프라인 제거/표시 | dead code 11건 정리 (+1,613행 삭제) | ✅ | 16.13 |
 | 17.10 | 설정 페이지 저장 로직 또는 제거 | 페이지 + 네비게이션 링크 삭제 | ✅ | 16.14 |
 | 17.11 | 환경변수 기본값 단일 진실 공급원 통일 | `provider.ts`/`env.ts` 불일치 제거 | ✅ | 16.15 |
-| 17.12 | 유사 검색 GIN 인덱스 | FTS 쿼리 실행계획에 Index Scan | 🔴 | 16.16 |
+| 17.12 | 유사 검색 GIN 인덱스 | FTS 쿼리 실행계획에 Index Scan | ✅ (마이그레이션 미적용) | 16.16 |
 | 17.13 | 모든 청크 실패 처리 | 0건 성공 오판 제거 | ✅ | 16.4 |
 | 17.14 | stuck Job 복구 | Worker 재시작 후 자동 재처리 | ✅ | 16.5 |
 | 17.15 | DOCX 파서 분기 | DOCX 통합 테스트 통과 | ✅ | 16.2 |

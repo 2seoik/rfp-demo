@@ -82,32 +82,9 @@ export async function DELETE(
       .map((d) => d.file_url)
       .filter((fp): fp is string => Boolean(fp));
 
-    // DB 삭제를 트랜잭션으로 래핑 (rfp-pipeline-spec.md §16.7 / §17.3)
-    // 중간 실패 시 전체 롤백되어 부분 삭제 상태를 방지한다.
+    // DB 삭제를 트랜잭션으로 래핑 (rfp-pipeline-spec.md §16.7 / §17.3).
+    // FK ON DELETE CASCADE가 모든 하위 테이블로 전파하므로 projects만 삭제한다.
     await db.transaction(async (tx) => {
-      await tx.execute(sql`
-        DELETE FROM citations
-        WHERE response_id IN (
-          SELECT id FROM responses WHERE requirement_id IN (
-            SELECT id FROM requirements WHERE project_id = ${id}::uuid
-          )
-        )
-      `);
-      await tx.execute(sql`
-        DELETE FROM responses
-        WHERE requirement_id IN (
-          SELECT id FROM requirements WHERE project_id = ${id}::uuid
-        )
-      `);
-      await tx.execute(sql`DELETE FROM requirements WHERE project_id = ${id}::uuid`);
-      await tx.execute(sql`
-        DELETE FROM document_chunks
-        WHERE document_id IN (
-          SELECT id FROM documents WHERE project_id = ${id}::uuid
-        )
-      `);
-      await tx.execute(sql`DELETE FROM jobs WHERE project_id = ${id}::uuid`);
-      await tx.execute(sql`DELETE FROM documents WHERE project_id = ${id}::uuid`);
       await tx.execute(sql`DELETE FROM projects WHERE id = ${id}::uuid`);
     });
 
