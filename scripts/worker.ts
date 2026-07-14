@@ -220,6 +220,7 @@ const BATCH_MAX_CHARS = parseInt(process.env.RFP_LLM_BATCH_MAX_CHARS || "16000",
 const LLM_CONCURRENCY = parseInt(process.env.RFP_LLM_CONCURRENCY || "2", 10);
 const LLM_MAX_RETRIES = parseInt(process.env.RFP_LLM_MAX_RETRIES || "2", 10);
 const LLM_TIMEOUT_MS = parseInt(process.env.RFP_LLM_TIMEOUT_MS || "60000", 10);
+const WORKER_POOL_SIZE = parseInt(process.env.RFP_WORKER_POOL_SIZE || "1", 10);
 
 interface BatchItem { expectedId: string; text: string; startOffset: number; }
 interface Batch { items: BatchItem[]; index: number; }
@@ -793,69 +794,73 @@ async function handleRfpAnalyze(job: any) {
 // ─── Main Polling Loop ─────────────────────────────────────
 async function poll() {
   try {
-    const [job] = (await db.execute(sql`
+    const jobs = (await db.execute(sql`
       UPDATE jobs
       SET status = 'processing', updated_at = NOW()
-      WHERE id = (
+      WHERE id = ANY(ARRAY(
         SELECT id FROM jobs
         WHERE status = 'pending'
         ORDER BY created_at ASC
-        LIMIT 1
+        LIMIT ${WORKER_POOL_SIZE}
         FOR UPDATE SKIP LOCKED
-      )
+      ))
       RETURNING *
     `)).rows ?? [];
 
-    if (!job) return;
+    if (jobs.length === 0) return;
 
-    const r = job as Record<string, any>;
-    const j = {
-      id: r.id,
-      type: r.type,
-      status: r.status,
-      projectId: r.project_id,
-      documentId: r.document_id,
-      progress: r.progress,
-      message: r.message,
-      error: r.error,
-      result: r.result,
-      retryCount: r.retry_count,
-      createdAt: r.created_at,
-      updatedAt: r.updated_at,
-    };
+    log('POOL', `📦 ${jobs.length}개 Job 동시 처리 시작`);
 
-    log(j.id, `🚀 작업 시작: ${j.type} (project=${j.projectId?.slice(0, 8)})`);
+    await Promise.all(jobs.map(async (row) => {
+      const r = row as Record<string, any>;
+      const j = {
+        id: r.id,
+        type: r.type,
+        status: r.status,
+        projectId: r.project_id,
+        documentId: r.document_id,
+        progress: r.progress,
+        message: r.message,
+        error: r.error,
+        result: r.result,
+        retryCount: r.retry_count,
+        createdAt: r.created_at,
+        updatedAt: r.updated_at,
+      };
 
-    try {
-      switch (j.type) {
-        case "rfp_analyze":
-          await handleRfpAnalyze(j);
-          break;
-        default:
-          throw new Error(`알 수 없는 작업 유형: ${j.type}`);
-      }
-    } catch (err: any) {
-      log(j.id, `❌ 작업 실패: ${err.message}`);
+      log(j.id, `🚀 작업 시작: ${j.type} (project=${j.projectId?.slice(0, 8)})`);
 
-      const retryCount = (j.retryCount ?? 0) + 1;
-      if (retryCount < 3) {
-        await updateJob(j.id, {
-          status: "pending",
-          retryCount,
-          message: `재시도 ${retryCount}/3: ${err.message}`,
-        });
-      } else {
-        await updateJob(j.id, {
-          status: "failed",
-          error: err.message,
-          message: `❌ ${err.message}`,
-        });
+      try {
+        switch (j.type) {
+          case "rfp_analyze":
+            await handleRfpAnalyze(j);
+            break;
+          default:
+            throw new Error(`알 수 없는 작업 유형: ${j.type}`);
+        }
+      } catch (err: any) {
+        log(j.id, `❌ 작업 실패: ${err.message}`);
 
-        if (j.projectId) {
-          await db.execute(sql`UPDATE projects SET status = 'draft' WHERE id = ${j.projectId}::uuid`);
+        const retryCount = (j.retryCount ?? 0) + 1;
+        if (retryCount < 3) {
+          await updateJob(j.id, {
+            status: "pending",
+            retryCount,
+            message: `재시도 ${retryCount}/3: ${err.message}`,
+          });
+        } else {
+          await updateJob(j.id, {
+            status: "failed",
+            error: err.message,
+            message: `❌ ${err.message}`,
+          });
+
+          if (j.projectId) {
+            await db.execute(sql`UPDATE projects SET status = 'draft' WHERE id = ${j.projectId}::uuid`);
+          }
         }
       }
-    }
+    }));
   } catch (err) {
     console.error("[WORKER] Polling error:", err);
   }
@@ -899,9 +904,9 @@ async function main() {
   console.log("=".repeat(50));
   console.log(`🧑‍🏭 RFP Worker #${workerId} 시작`);
   console.log(`   Model: ${process.env.LLM_MODEL || "minimax-m2.7"}`);
+  console.log(`   다중 Job 동시 처리: ${WORKER_POOL_SIZE}개`);
   console.log(`   Polling interval: ${POLL_INTERVAL_MS / 1000}초`);
   console.log(`   PID: ${process.pid}`);
-  console.log(`   다중 Worker 병렬 실행: 지원됨 (FOR UPDATE SKIP LOCKED)`);
   console.log(`   임베딩: ${process.env.EMBEDDING_API_URL ? `✅ ${process.env.EMBEDDING_API_URL}` : "❌ 미설정"}`);
   console.log("=".repeat(50));
 
