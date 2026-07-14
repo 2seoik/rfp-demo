@@ -3,6 +3,8 @@ import { sql } from "drizzle-orm";
 import { notFound } from "next/navigation";
 import ProjectClient from "./ProjectClient";
 
+type Citation = { chunk_id: string; score: number; content: string; page: number | null; doc_name: string };
+
 type Requirement = {
   id: string;
   original_id: string | null;
@@ -15,13 +17,31 @@ type Requirement = {
   draft_text: string | null;
   final_text: string | null;
   confidence_label: string | null;
-  citations: any[];
+  citations: Citation[];
+};
+
+type ProjectRecord = {
+  id: string;
+  name: string;
+  status: string;
+  period: string | null;
+  header_text?: string;
+  biz_name?: string;
+  [key: string]: unknown;
+};
+
+type DocumentSummary = {
+  id: string;
+  name: string;
+  type: string;
+  parsed_status: string;
+  created_at: string;
 };
 
 type ProjectData = {
-  project: any;
+  project: ProjectRecord;
   requirements: Requirement[];
-  documents: any[];
+  documents: DocumentSummary[];
 };
 
 async function getProjectData(id: string): Promise<ProjectData | null> {
@@ -37,7 +57,7 @@ async function getProjectData(id: string): Promise<ProjectData | null> {
     if (!project) return null;
 
     // 사업명 추출
-    const ht = (project as any).header_text || "";
+    const ht = (project.header_text as string) || "";
     let bizName = "";
     const m = /(?:사\s*업\s*명|사업명)\s*[:：]?\s*(.+?)(?:\n|$)/gi.exec(ht);
     if (m) {
@@ -46,7 +66,7 @@ async function getProjectData(id: string): Promise<ProjectData | null> {
         bizName = c.replace(/\t/g, "").replace(/\s{2,}/g, " ");
       }
     }
-    (project as any).biz_name = bizName;
+    project.biz_name = bizName;
 
     const reqs = (await db.execute(sql`
       SELECT
@@ -90,7 +110,7 @@ async function getProjectData(id: string): Promise<ProjectData | null> {
       ORDER BY created_at DESC
     `)).rows ?? [];
 
-    return { project, requirements: reqs as Requirement[], documents: docs as any[] };
+    return { project: project as ProjectRecord, requirements: reqs as Requirement[], documents: docs as DocumentSummary[] };
   } catch (error) {
     console.error("Failed to fetch project:", error);
     return null;

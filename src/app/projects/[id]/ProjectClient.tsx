@@ -11,6 +11,8 @@ function sanitizeMarkHtml(html: string): string {
   );
 }
 
+type Citation = { chunk_id: string; score: number; content: string; page: number | null; doc_name: string };
+
 type Requirement = {
   id: string;
   original_id: string | null;
@@ -23,7 +25,7 @@ type Requirement = {
   draft_text: string | null;
   final_text: string | null;
   confidence_label: string | null;
-  citations: any[];
+  citations: Citation[];
 };
 
 type MatchedPair = {
@@ -67,9 +69,9 @@ type SourceProjectInfo = {
 
 type Props = {
   data: {
-    project: any;
+    project: { id: string; name: string; status: string; period: string | null; biz_name?: string; header_text?: string };
     requirements: Requirement[];
-    documents: any[];
+    documents: { id: string; name: string; type: string; parsed_status: string; created_at: string }[];
   };
   autoAnalyze?: boolean;
 };
@@ -256,8 +258,8 @@ export default function ProjectClient({ data, autoAnalyze }: Props) {
         <div className="flex items-start justify-between">
           <div>
             <h1 className="text-2xl font-bold">{project.name}</h1>
-            {(project as any).biz_name && (
-              <p className="mt-1 text-sm text-gray-500">{(project as any).biz_name}</p>
+            {project.biz_name && (
+              <p className="mt-1 text-sm text-gray-500">{project.biz_name}</p>
             )}
           </div>
           {!analyzing && (
