@@ -108,22 +108,21 @@ Independent Worker (tsx)
 
 ```env
 LLM_API_BASE="https://opencode.ai/zen/go/v1"
-LLM_MODEL="minimax-m2.7"
+LLM_MODEL="minimax-m2.7"    # 현재 운영
 ```
 
-현재 모델은 응답 속도는 빠르지만 한국어 RFP 요구사항 추출 커버리지가 낮다. 운영 품질 기준을 충족하려면 모델 교체 또는 추출 파이프라인 개선이 필요하다.
+현재 모델(minimax-m2.7)은 배치 병렬 처리(×2)와 name-only 영문 프롬프트로 5개 프로젝트 평균 35초에 분석을 완료한다. 운영 품질 기준을 충족하려면 모델 교체 또는 추출 파이프라인 개선이 필요하다.
 
 ### 3.2 LLM 모델 선정 이력
 
-> 2026-07-11 OpenCode 게이트웨이 벤치마크. 세부 테이블은 git 히스토리(`docs/project-summary.md` §10) 참고.
+| 모델 | 호출속도 | name 커버리지 | 실제 분석(59reqs) | 평가 |
+|---|---|---|---|---|
+| `minimax-m2.7` | 6초/호출 | 100% | **~30초** | 현재 운영 — 배치 병렬(×2)로 1분 이내 |
+| `kimi-k2.6` | 17초/호출 | 100% | ~5분 | 정확하나 느림 (fallback) |
+| `deepseek-v4-flash` | 40~50초 | 100% | 미측정 | reasoning 토큰 과다 |
+| `gpt-4o-mini` | 3~5초 (미확보) | 예상 100% | 예상 <20초 | 권장 — 키 확보 시 속도+품질 동시 확보 |
 
-| 모델 | 응답속도 | 커버리지(39개 ID) | 평가 |
-|---|---|---|---|
-| `kimi-k2.6` | 17초/호출 | 100% | 현재 운영 — 정확하나 17분/프로젝트 |
-| `minimax-m2.7` | 6초/호출 | 28.8% | 빠르나 누락 많음 (content 미반환 이슈) |
-| `deepseek-v4-flash` | 40~50초 | 100% | reasoning 토큰 과다 |
-
-권장: OpenAI `gpt-4o-mini` 키 확보 시 속도(3~5초)와 품질을 동시 확보 가능.
+> 2026-07-11 OpenCode 게이트웨이 벤치마크 기준. 현재 `minimax-m2.7`으로 5개 프로젝트 분석 결과 평균 35초(21~61초).
 
 ---
 
@@ -131,7 +130,7 @@ LLM_MODEL="minimax-m2.7"
 
 ```text
 rfp-demo/
-├── .env
+├── .env / .env.local
 ├── docker-compose.yml
 ├── drizzle.config.ts
 ├── package.json
@@ -149,11 +148,8 @@ rfp-demo/
 │   │   ├── dashboard/
 │   │   ├── projects/new/
 │   │   ├── projects/[id]/
-│   │   ├── library/
-│   │   └── settings/
-│   ├── db/
-│   │   ├── index.ts
-│   │   └── schema.ts
+│   │   └── library/
+│   ├── db/  (→ drizzle/)
 │   └── lib/
 │       ├── env.ts
 │       ├── llm.ts
@@ -1137,7 +1133,7 @@ DATABASE_URL="postgres://rfpuser:rfppass@localhost:5433/rfp-demo"
 
 LLM_API_BASE="https://opencode.ai/zen/go/v1"
 LLM_API_KEY="OPENCODE_API_KEY"
-LLM_MODEL="minimax-m2.7"
+LLM_MODEL="minimax-m2.7"    # 현재 운영
 ```
 
 권장 추가 변수:
@@ -1425,7 +1421,7 @@ API 및 Worker 로그에 API 키, 전체 문서 원문, 개인정보를 노출�
 2. ✅ LLM 프롬프트 영문화 + name 전용 → 추출 안정화
 3. ✅ `cleanDescription` 6단계 파이프라인: ID·name·보일러플레이트 제거 + `reflowLines` 깨진 줄 복원 (§10.2)
 4. ✅ 프론트엔드: `whitespace-pre-line` + "•" 불릿 렌더링 (§10.3)
-5. 🔴 고품질 모델 (gpt-4o-mini) 교체 — 미적용, 현재 kimi-k2.6으로 100% name 추출 중
+5. 🔴 고품질 모델 (gpt-4o-mini) 교체 — 미적용, 현재 minimax-m2.7으로 100% name 추출 중, 분석 시간 21~61초로 실용적
 
 `source_text`는 더 이상 LLM이나 원문 블록이 아닌 **결정적 코드 정제**로 생성된다. type/priority는 LLM에서 추출하지 않고 DB 기본값(`technical`/`essential`)을 사용한다. 모델 교체 시 신뢰할 수 있는 type/priority/description 추출을 재검토한다.
 
