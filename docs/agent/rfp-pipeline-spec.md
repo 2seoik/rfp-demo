@@ -799,13 +799,23 @@ async function main() {
   await recoverStuckJobs();
 
   while (true) {
-    await poll();
+    await poll();     // 최대 WORKER_POOL_SIZE개 Job 동시 처리
     await sleep(2000);
   }
 }
 ```
 
 Worker 시작 시 오래된 `processing` Job을 복구해야 한다. 권장 기준은 `updated_at`이 일정 시간 이상 갱신되지 않은 Job이다.
+
+**동시성 설정** (환경변수):
+
+| 변수 | 기본값 | 설명 |
+|---|---|---|
+| `RFP_WORKER_POOL_SIZE` | 1 | 동시 처리할 최대 Job 수 |
+| `RFP_LLM_CONCURRENCY` | 2 | Job 내 LLM 배치 호출 동시성 |
+| `WORKER_POLL_INTERVAL_MS` | 2000 | 폴링 간격 (ms) |
+
+Job 수준은 `Promise.all`로 병렬 처리되고, LLM 호출은 `runWithConcurrency`로 동시성이 제어된다. 두 수준 모두 독립적이며 FOR UPDATE SKIP LOCKED가 Job 간 충돌을 방지한다.
 
 ### 9.3 Job 획득
 
@@ -1261,6 +1271,18 @@ http://localhost:3000
 pnpm db:push
 pnpm db:studio
 ```
+
+### 13.6 프로덕션 배포
+
+Worker는 상시 실행 프로세스이므로 서버리스 환경(Vercel Functions, AWS Lambda)에서는 동작하지 않는다. 아래 옵션을 선택한다.
+
+| 옵션 | 설명 |
+|---|---|
+| VM/Docker | Railway, Fly.io, DigitalOcean Droplet 등에 Next.js + Worker를 단일 호스트로 배포 |
+| 분리 배포 | Next.js는 Vercel, Worker는 별도 상시 호스트(Railway, EC2 등)에서 실행 |
+| 서버리스 Job Queue | QStash, Inngest 등을 도입하면 Worker polling을 대체 가능 (미구현) |
+
+`.env` 파일은 배포 환경에서 환경변수로 주입한다. LLM API 키, DATABASE_URL 등 민감 정보는 환경변수로만 주입하고 git에 커밋하지 않는다.
 
 ---
 
