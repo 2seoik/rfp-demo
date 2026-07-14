@@ -115,38 +115,15 @@ LLM_MODEL="minimax-m2.7"
 
 ### 3.2 LLM 모델 선정 이력
 
-> 2026-07-10~11 기준 OpenCode 게이트웨이에서 테스트한 결과. 새 모델 도입 시 이 표를 기준으로 회귀 테스트한다.
+> 2026-07-11 OpenCode 게이트웨이 벤치마크. 세부 테이블은 git 히스토리(`docs/project-summary.md` §10) 참고.
 
-#### 벤치마크 (3000자 한국어 RFP excerpt, JSON 추출, 30초 timeout)
+| 모델 | 응답속도 | 커버리지(39개 ID) | 평가 |
+|---|---|---|---|
+| `kimi-k2.6` | 17초/호출 | 100% | 현재 운영 — 정확하나 17분/프로젝트 |
+| `minimax-m2.7` | 6초/호출 | 28.8% | 빠르나 누락 많음 (content 미반환 이슈) |
+| `deepseek-v4-flash` | 40~50초 | 100% | reasoning 토큰 과다 |
 
-| 모델 | 응답시간 | reasoning | 요구사항수 | 평가 |
-|---|---:|---:|---:|---|
-| `minimax-m2.7` | 6.4초 | 0 | 3/3 | 속도 우수, 커버리지 낮음 |
-| `minimax-m2.5` | 6.6초 | 0 | 3/3 | 속도 우수 |
-| `glm-5.2` | 13.0초 | 1,618 | 3/3 | 안정 |
-| `kimi-k2.6` | 25.2초 | 9,838 | 3/3 | 정확하지만 느림 (현재 운영 모델) |
-| `deepseek-v4-flash` | 40~50초 | 16,811 | 39/59 | reasoning 토큰 과다, `max_tokens=16384` 필요 |
-| `qwen3.7-plus` | timeout | — | — | 게이트웨이 응답 없음 |
-| `mimo-v2.5` | — | — | 0/3 | `content: null` (폐기) |
-
-#### 실제 추출 커버리지 (59개 ID 테스트 PDF)
-
-| 모델 | 커버리지 | 특성 |
-|---|---:|---|
-| `deepseek-v4-flash` | 59/59 (100%) | 정확하지만 40~50초/호출 |
-| `kimi-k2.6` | 59/59 (100%) | 정확, 17초/호출 → 59호출 시 ~17분 |
-| `minimax-m2.7` | 17/59 (28.8%) | 빠르지만 누락 다수 |
-
-#### 모델별 알려진 이슈
-
-- `minimax-m2.7`: 한 청크에 여러 요구사항이 있어도 일부만 반환하는 경향. ID 경계 분할 + 배치 처리로 부분 완화.
-- `deepseek-v4-flash`: reasoning 토큰이 출력을 잠식해 `max_tokens` 초과. `max_tokens=16384` 또는 reasoning 제어 필요.
-- `glm-5.2`: 간헐 timeout.
-- `qwen3.7-plus`: OpenCode 게이트웨이에서 응답 없음.
-
-#### 권장
-
-OpenAI `gpt-4o-mini` 키 확보 시 속도(3~5초)와 품질(50~59개)을 동시 확보 가능. `.env`의 `LLM_MODEL`과 `LLM_API_BASE`만 변경하면 된다.
+권장: OpenAI `gpt-4o-mini` 키 확보 시 속도(3~5초)와 품질을 동시 확보 가능.
 
 ---
 
@@ -1453,101 +1430,39 @@ API 및 Worker 로그에 API 키, 전체 문서 원문, 개인정보를 노출�
 `source_text`는 더 이상 LLM이나 원문 블록이 아닌 **결정적 코드 정제**로 생성된다. type/priority는 LLM에서 추출하지 않고 DB 기본값(`technical`/`essential`)을 사용한다. 모델 교체 시 신뢰할 수 있는 type/priority/description 추출을 재검토한다.
 
 ### 16.2 DOCX 처리 불일치 ✅
-
-Worker에 `mammoth` 기반 DOCX 파서 분기가 구현되었다. 업로드 API가 DOCX를 허술하면 확장자별 파서가 정상 동작한다. (원래 항목: 업로드 API는 DOCX를 허용하지만 Worker가 PDF 파서만 사용하면 런타임 실패가 발생한다.)
-
+Worker에 mammoth 기반 DOCX 파서 분기 구현 완료.
 ### 16.3 사업기간 추출 간헐 실패 ✅
-
-정규식/키워드 fallback이 Worker에 구현되었다. LLM 호출 실패 시에도 `period`를 정규식으로 회복한다. (원래 항목: LLM 호출 실패를 무시하므로 `period`가 비어 있을 수 있다.)
-
+정규식/키워드 fallback 구현 완료.
 ### 16.4 모든 청크 실패 시 0건 성공 처리 ✅
-
-Worker가 성공한 청크 수가 0이면 Job을 `failed`로 처리한다. (원래 항목: 모든 청크 실패와 실제 요구사항 없음은 구분되어야 한다.)
-
+0건 성공 시 Job을 failed로 처리.
 ### 16.5 Worker 중단 시 processing Job 고착 ✅
-
-Worker 시작 시 `recoverStuckJobs()`로 `processing` 상태 Job을 `pending`으로 복구한다. (원래 항목: stuck Job 복구 로직이 없으면 수동 SQL이 필요하다.)
-
+Worker 시작 시 recoverStuckJobs()로 복구.
 ### 16.6 업로드 검증 미흡 (보안 P0) ✅
-
-`src/app/api/upload/route.ts`는 파일 확장자만 검증하고 MIME 타입과 최대 크기를 검증하지 않는다. 또한 원본 파일명을 그대로 사용해 경로 traversal 위험이 있다. `next.config.ts`에 `bodySizeLimit`도 설정되어 있지 않다.
-
-→ ✅ 해결: `path.basename()` 정규화 + MIME·확장자 매칭 검증 + 50MB 크기 제한 + 빈 파일 차단 추가.
-
+path.basename() + MIME 매칭 + 50MB 제한 + 빈 파일 차단.
 ### 16.7 프로젝트 삭제 시 트랜잭션 + 파일 정리 누락 (데이터 무결성 P0) ✅
-
-`DELETE /api/projects/[id]`는 테이블별 DELETE 쿼리를 순서대로 실행하지만 `db.transaction()`으로 래핑하지 않는다. 중간 실패 시 부분 삭제 상태가 된다. 또한 `uploads/` 디렉토리의 원본 파일을 정리하지 않는다.
-
-→ ✅ 해결: `db.transaction()`으로 전체 DELETE 래핑 + 커밋 성공 후 `uploads/` 내 파일 best-effort 삭제(`path.isAbsolute` + `startsWith(uploadDir)` 검증).
-
+db.transaction() + FK CASCADE + uploads/ 파일 정리.
 ### 16.8 `dangerouslySetInnerHTML` HTML 주입 위험 (보안 P0) ✅
-
-`src/app/projects/[id]/ProjectClient.tsx`가 `dangerouslySetInnerHTML`로 `similar/route.ts`의 `ts_headline` 결과(`<mark>` 포함)를 주입했다. 두 사용 지점에 공통 살균 함수 `sanitizeMarkHtml()`를 두어 `<mark>`/`</mark>` 리터럴만 허용하고 그 외 모든 태그(속성이 있는 `<mark onclick=...>` 포함)를 제거한다.
-
+sanitizeMarkHtml()로 mark 태그만 허용.
 ### 16.9 `/api/test` 보호 없음 (보안 P0) ✅
-
-`src/app/api/test/route.ts`는 디버그용 엔드포인트로 인증이나 조직 범위 검증 없이 프로덕션에 노출되었다. 환경 게이트(`NODE_ENV === "production"`일 때 404)를 추가해 프로덕션 노출을 차단했다. 개발 환경에서는 기존 LLM 연결 테스트 동작을 유지한다. 인증 시스템 도입 시 환경 게이트 대신 인증 게이트로 교체를 검토한다.
-
+NODE_ENV=production 시 404.
 ### 16.10 재분석 시 기존 요구사항 미삭제 (데이터 무결성 P0) ✅
-
-Worker가 동일 프로젝트 재분석 시 기존 `requirements`를 먼저 DELETE(FK CASCADE로 `responses`, `citations`도 정리)한 후 새로 INSERT한다. DB 확인 결과 `responses.draft_text`가 0건이라 사용자 응답 데이터 손실 위험 없음.
-
+트랜잭션 시작 시 DELETE FROM requirements (FK CASCADE).
 ### 16.11 `analyze-status` 정렬 미지정 (데이터 무결성 P0) ✅ (실제 문제 아님 — page.tsx에서 이미 `ORDER BY req."order"` 사용)
-
-2026-07-13 코드 검토에서 `GET /api/projects/[id]/analyze-status`가 `ORDER BY` 없이 요구사항을 반환한다고 기록했으나, 실제로는 해당 라우트는 job 상태(status/progress/message)만 반환하고 요구사항을 반환하지 않는다. 요구사항은 `src/app/projects/[id]/page.tsx`의 `getProjectData`에서 `ORDER BY req."order"`로 이미 정렬되어 조회된다. 따라서 수정 불필요.
-
+진단 오류 — requirements는 page.tsx에서 이미 ORDER BY.
 ### 16.12 FK `ON DELETE CASCADE` 미설정 (성능/무결성 P1) ✅
-
-`src/db/schema.ts`의 모든 종속 FK에 `ON DELETE CASCADE`를 추가했다: documents→projects, documentChunks→documents, requirements→projects, responses→requirements, citations→responses/chunks, jobs→projects/documents. `organizations`/`users` FK는 CASCADE 대상에서 제외 (의도하지 않은 조직·사용자 삭제 방지). `DELETE /api/projects/[id]`가 단일 `DELETE FROM projects`로 단순화되었다.
-
-마이그레이션: `drizzle/0002_fk_cascade_gin_indexes.sql` (미적용 — `pnpm db:push`로 적용).
-
+8개 FK ON DELETE CASCADE, 마이그레이션 적용 완료.
 ### 16.13 미사용(Dead) 분석 파이프라인 (코드 품질 P1) ✅
-
-2026-07-13 삭제 완료 (11개 파일, -1,613행):
-
-- `src/app/api/projects/[id]/analyze/route.ts` — SSE 동기 분석 (미사용)
-- `src/lib/services/rfp-analysis.ts` — 별도 분석 서비스 (미사용, 타입 오류 3건)
-- `src/lib/services/document-processor.ts` — 청크 생성 (미사용)
-- `src/lib/services/answer-recommendation.ts` — 응답 추천 (미사용, UI 미연결)
-- `src/lib/services/export.ts` — 내보내기 (미사용, UI 미연결)
-- `src/lib/search.ts` — `hybridSearch` pgvector 하이브리드 검색
-- `src/lib/prompts.ts` — 구식 프롬프트 (`RFP_ANALYSIS_SYSTEM_PROMPT`, `ANSWER_RECOMMENDATION_SYSTEM_PROMPT`)
-- `src/lib/llm.ts` — `chat`/`getEmbedding` (Provider Adapter로 대체됨)
-- `src/lib/chunker.ts` — 청크 분할 (Worker에 통합됨)
-- `src/lib/parser.ts` — 문서 파서 (Worker에 통합됨)
-- `src/app/settings/page.tsx` — 설정 페이지 (저장 로직 없음, 미사용)
-
-연쇄 삭제: 참조 체인이 모두 단방향이었기 때문에 안전하게 일괄 제거 가능. tsc 오류 11→8 감소.
-
+11개 파일 삭제(-1,613행).
 ### 16.14 설정 페이지 미작동 (UX/기능 P1) ✅
-
-`/settings` 페이지 삭제. 저장 로직과 모델 목록이 `provider.ts`와 불일치하여 혼란을 야기했다. LLM 설정은 `.env`와 `provider.ts`에서 직접 관리한다.
-
+페이지 + 네비게이션 링크 삭제.
 ### 16.15 환경변수 기본값 분산 (코드 품질 P1) ✅
-
-`src/lib/env.ts`에서 LLM 관련 기본값(`LLM_MODEL: "deepseek-chat"`, `LLM_API_BASE: "https://api.opencode.ai/v1"`)을 제거. `provider.ts`의 `getPrimaryModel()`이 단일 진실 공급원이다.
-
+env.ts LLM 기본값 제거, provider.ts가 단일 진실 공급원.
 ### 16.16 유사 검색 GIN 인덱스 미설정 (성능 P1) ✅
-
-GIN 인덱스 마이그레이션 파일 생성: `idx_requirements_source_text_fts`(requirements.source_text), `idx_documents_header_text_fts`(documents.header_text). `drizzle/0002_fk_cascade_gin_indexes.sql`에 포함. 미적용 — `pnpm db:push`로 적용.
-
+GIN 인덱스 2개 생성, 적용 완료.
 ### 16.17 미연결 서비스 (기능 P2) ✅ → §16.13에 통합 삭제됨
-
-`src/lib/services/export.ts`, `src/lib/services/answer-recommendation.ts`은 §16.13 dead code 정리에서 함께 삭제됨.
-
+§16.13과 함께 삭제됨.
 ### 16.18 매트릭스 정렬/필터 부재, 모바일 삭제 접근성 (UX P2) ✅
-
-요구사항 매트릭스에 정렬/필터가 없고, 대시보드 삭제 버튼이 모바일에서 접근성이 떨어진다. 스크린 리더 라벨과 포커스 링도 보강한다.
-
-- ✅ 정렬: 매트릭스 헤더(ID/요구사항/유형) 클릭 정렬 + `aria-sort` 화살표 표시 추가.
-- ✅ 삭제 버튼 a11y: `aria-label`, `focus:opacity-100`, `focus:ring`, ESC 닫기, 모달 `role="dialog"`/`aria-modal`/`aria-labelledby`, 취소 버튼 `autoFocus` 추가.
-- ✅ 분석 중단 라벨 정정: “취소하고 대시보드로” → “대시보드로 이동” (분석은 백그라운드에서 유지됨을 title로 명시).
-- ✅ 필터: 유형 뱃지 클릭 토글 + "전체(N)" 버튼 추가.
-- 🔴 중요도/신뢰도 컬럼은 LLM 모델 변경 후 신뢰할 수 있는 데이터 확보 시 추가(§8.7).
-
----
-
+정렬+필터+a11y 완료.
 ## 17. 개선 우선순위
 
 > 2026-07-13 코드 검토 기준. §16 항목과 매핑. ✅ 완료 / 🔴 잔존.
@@ -1592,28 +1507,11 @@ GIN 인덱스 마이그레이션 파일 생성: `idx_requirements_source_text_ft
 
 ## 18. 권장 추출 개선안
 
-LLM이 요구사항을 누락하는 문제를 줄이기 위해 단순 고정 길이 청크보다 ID 기반 분할을 우선 검토한다.
+### 18.1 ID 기반 전처리 ✅
+`src/lib/requirement-id.ts`로 구현 완료 (M1-C). `createIdBoundaryBlocks()`가 ID 경계 블록을 생성한다.
 
-### 18.1 ID 기반 전처리
-
-1. 전체 텍스트에서 `/[A-Z]{2,4}-\d{3}/g`를 모두 찾는다.
-2. 각 ID 시작점부터 다음 ID 직전까지를 하나의 후보 블록으로 만든다.
-3. 지나치게 짧은 블록은 다음 블록과 결합한다.
-4. LLM에는 블록 단위로 구조화만 요청한다.
-5. 정규식으로 찾은 ID 개수와 LLM 결과 개수를 비교한다.
-
-### 18.2 커버리지 검증
-
-```text
-coverage = 저장된 유효 요구사항 ID 수 / 원문에서 탐지한 고유 ID 수
-```
-
-- coverage가 임계값보다 낮으면 재분석한다.
-- 권장 초기 임계값은 0.85다.
-- 재분석 시 더 작은 청크 또는 다른 모델을 사용한다.
-- 원문 ID 탐지가 불가능한 문서에서는 기존 map-reduce를 fallback으로 사용한다.
-
-이 방식은 모델이 여러 항목 중 일부만 선택하는 문제를 줄이고, 분석 결과 누락을 정량적으로 감지할 수 있다.
+### 18.2 커버리지 검증 (미구현)
+`coverage = 저장된 유효 요구사항 ID 수 / 원문에서 탐지한 고유 ID 수`. coverage < 0.85면 느린 고품질 모델로 재처리하는 선택적 전략. §16.1 추출 커버리지 개선 시 함께 구현 검토.
 
 ---
 
