@@ -1,5 +1,5 @@
-import { db } from "@/db";
-import { projects, requirements, documents } from "@/db/schema";
+import { db } from "drizzle";
+import { projects, requirements, documents } from "drizzle/schema";
 import { sql, eq } from "drizzle-orm";
 import { NextResponse } from "next/server";
 

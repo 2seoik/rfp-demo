@@ -1466,9 +1466,9 @@ Worker 시작 시 `recoverStuckJobs()`로 `processing` 상태 Job을 `pending`�
 
 `src/app/api/test/route.ts`는 디버그용 엔드포인트로 인증이나 조직 범위 검증 없이 프로덕션에 노출되었다. 환경 게이트(`NODE_ENV === "production"`일 때 404)를 추가해 프로덕션 노출을 차단했다. 개발 환경에서는 기존 LLM 연결 테스트 동작을 유지한다. 인증 시스템 도입 시 환경 게이트 대신 인증 게이트로 교체를 검토한다.
 
-### 16.10 재분석 시 기존 요구사항 미삭제 (데이터 무결성 P0) 🔴
+### 16.10 재분석 시 기존 요구사항 미삭제 (데이터 무결성 P0) ✅
 
-Worker가 동일 프로젝트 재분석 시 기존 `requirements`를 삭제하지 않는다. `UNIQUE(project_id, original_id)` 제약과 SELECT-before-INSERT로 중복 INSERT는 막히지만, 이전 분석의 잔재 요구사항이 섞일 수 있다. 재분석 시작 시 동일 `project_id`의 `requirements`를 먼저 비운다.
+Worker가 동일 프로젝트 재분석 시 기존 `requirements`를 먼저 DELETE(FK CASCADE로 `responses`, `citations`도 정리)한 후 새로 INSERT한다. DB 확인 결과 `responses.draft_text`가 0건이라 사용자 응답 데이터 손실 위험 없음.
 
 ### 16.11 `analyze-status` 정렬 미지정 (데이터 무결성 P0) ✅ (실제 문제 아님 — page.tsx에서 이미 `ORDER BY req."order"` 사용)
 
@@ -1538,7 +1538,7 @@ GIN 인덱스 마이그레이션 파일 생성: `idx_requirements_source_text_ft
 | 17.2 | `dangerouslySetInnerHTML` 허용 태그 화이트리스트/sanitize | LLM·`ts_headline` 입력에 악의적 태그 미주입 | ✅ | 16.8 |
 | 17.3 | 프로젝트 삭제 트랜잭션 + `uploads/` 파일 정리 | 중간 실패 시 롤백, 디스크 파일 정리 | ✅ | 16.7 |
 | 17.4 | `/api/test` 보호 (제거 또는 인증 게이트) | 프로덕션에서 미인증 접근 차단 | ✅ | 16.9 |
-| 17.5 | 재분석 시 기존 `requirements` 비우기 | 재분석 후 잔재 요구사항 0건 | 🔴 | 16.10 |
+| 17.5 | 재분석 시 기존 `requirements` 비우기 | 재분석 후 잔재 요구사항 0건 | ✅ | 16.10 |
 | 17.6 | `analyze-status` `ORDER BY` 명시 | 호출마다 행 순서 일정 | ✅ (실제 문제 아님) | 16.11 |
 | 17.7 | 추출 커버리지 개선 | 3개 테스트 PDF 평균 90% 이상 | ⚠️ | 16.1 |
 

@@ -1,5 +1,5 @@
-import { db } from "../src/db";
-import { jobs, documents, requirements, responses } from "../src/db/schema";
+import { db } from "../drizzle";
+import { jobs, documents, requirements, responses } from "../drizzle/schema";
 import { sql, eq } from "drizzle-orm";
 import { readFileSync } from "fs";
 import path from "path";
@@ -714,6 +714,10 @@ async function handleRfpAnalyze(job: any) {
 
   let savedCount = 0;
   await db.transaction(async (tx) => {
+    // 재분석 대비: 기존 requirements 삭제 (FK CASCADE로 responses, citations도 정리)
+    // §16.10 / §17.5 — 사용자 응답 데이터가 없으므로 안전하게 전체 교체
+    await tx.execute(sql`DELETE FROM requirements WHERE project_id = ${projectId}::uuid`);
+
     // 사업기간 저장
     if (projectInfo?.period) {
       const periodVal = String(projectInfo.period).slice(0, 200);

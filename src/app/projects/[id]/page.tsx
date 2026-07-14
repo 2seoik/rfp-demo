@@ -1,4 +1,4 @@
-import { db } from "@/db";
+import { db } from "drizzle";
 import { sql } from "drizzle-orm";
 import { notFound } from "next/navigation";
 import ProjectClient from "./ProjectClient";

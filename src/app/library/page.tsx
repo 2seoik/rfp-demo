@@ -1,5 +1,5 @@
-import { db } from "@/db";
-import { documents, documentChunks } from "@/db/schema";
+import { db } from "drizzle";
+import { documents, documentChunks } from "drizzle/schema";
 import { eq, sql } from "drizzle-orm";
 
 type DocRow = {

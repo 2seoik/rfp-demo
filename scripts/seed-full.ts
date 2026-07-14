@@ -1,6 +1,6 @@
 import { readFileSync } from "fs";
-import { db } from "../src/db";
-import { organizations, users, projects, documents, documentChunks, requirements, responses } from "../src/db/schema";
+import { db } from "../drizzle";
+import { organizations, users, projects, documents, documentChunks, requirements, responses } from "../drizzle/schema";
 import { eq } from "drizzle-orm";
 import OpenAI from "openai";
 import { cleanText, parseRequirements, normalizeReqs } from "./seed-utils";

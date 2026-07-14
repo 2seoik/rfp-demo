@@ -1,4 +1,4 @@
-import { db } from "@/db";
+import { db } from "drizzle";
 import { sql } from "drizzle-orm";
 import Link from "next/link";
 import DeleteButton from "./DeleteButton";

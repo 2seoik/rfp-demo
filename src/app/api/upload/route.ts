@@ -1,8 +1,8 @@
 import { NextResponse } from "next/server";
 import { writeFile, mkdir } from "fs/promises";
 import path from "path";
-import { db } from "@/db";
-import { organizations, projects, documents, jobs } from "@/db/schema";
+import { db } from "drizzle";
+import { organizations, projects, documents, jobs } from "drizzle/schema";
 import { sql } from "drizzle-orm";
 
 export async function POST(request: Request) {
